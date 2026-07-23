@@ -2,9 +2,11 @@
 # Run ONCE on the Pi (as part of pre-imaging) to install USB WiFi-setup provisioning.
 set -euo pipefail
 
+USER_NAME="${SUDO_USER:-$USER}"
+
 # 1. USB gadget requires dwc2
-grep -q '^dtoverlay=dwc2' /boot/firmware/config.txt 2>/dev/null || \
-  echo 'dtoverlay=dwc2' | sudo tee -a /boot/firmware/config.txt >/dev/null
+grep -q '^dtoverlay=dwc2,dr_mode=peripheral' /boot/firmware/config.txt 2>/dev/null || \
+  echo 'dtoverlay=dwc2,dr_mode=peripheral' | sudo tee -a /boot/firmware/config.txt >/dev/null
 
 # 2. Install the gadget bring-up script
 sudo install -m 0755 "$(dirname "$0")/usb-gadget-ncm.sh" /usr/local/sbin/usb-gadget-ncm.sh
@@ -31,14 +33,17 @@ EOF
 # 5. DHCP for the PC on usb0
 sudo apt-get install -y dnsmasq
 sudo tee /etc/dnsmasq.d/pisignage-usb.conf >/dev/null <<'EOF'
+port=0
 interface=usb0
-bind-interfaces
+bind-dynamic
 dhcp-range=10.55.0.10,10.55.0.20,255.255.255.0,1h
 EOF
 
-# 6. Allow the agent (user pi) to drive nmcli without a password
-echo 'pi ALL=(root) NOPASSWD: /usr/bin/nmcli' | sudo tee /etc/sudoers.d/pisignage-nmcli >/dev/null
-sudo chmod 0440 /etc/sudoers.d/pisignage-nmcli
+# 6. Allow the agent's user to drive nmcli without a password (validated before install)
+TMP_SUDO="$(mktemp)"
+echo "$USER_NAME ALL=(root) NOPASSWD: /usr/bin/nmcli" > "$TMP_SUDO"
+sudo visudo -cf "$TMP_SUDO" && sudo install -m 0440 "$TMP_SUDO" /etc/sudoers.d/pisignage-nmcli
+rm -f "$TMP_SUDO"
 
 sudo systemctl enable usb-gadget-ncm.service
 echo "==> USB provisioning installed. Reboot, then this Pi presents a USB setup link at 10.55.0.1:8080."

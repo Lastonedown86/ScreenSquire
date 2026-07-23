@@ -19,5 +19,8 @@ if [ ! -d "$G" ]; then
   ln -sf functions/ncm.usb0 configs/c.1/
   ls /sys/class/udc > UDC
 fi
+# the ncm function creates usb0 asynchronously after the UDC bind — wait for it
+for _ in $(seq 1 50); do ip link show usb0 >/dev/null 2>&1 && break; sleep 0.1; done
+command -v udevadm >/dev/null && udevadm settle || true
 ip addr add 10.55.0.1/24 dev usb0 2>/dev/null || true
 ip link set usb0 up
