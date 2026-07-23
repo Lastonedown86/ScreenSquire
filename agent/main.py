@@ -19,6 +19,7 @@ import logging
 import mimetypes
 import os
 import socket
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -252,6 +253,80 @@ async def kiosk_page():
 
 
 app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
+
+# ---- screenshot dashboard (boards + live timer) ----
+DASHBOARD_FILE = DATA_DIR / "dashboard.json"
+
+
+class TimerState(BaseModel):
+    state: Literal["running", "paused", "stopped"] = "stopped"
+    endsAt: Optional[int] = None       # epoch ms, stamped by the agent when running
+    remaining: Optional[int] = None    # seconds
+    round: Optional[int] = None
+    label: Optional[str] = None
+
+
+class DashboardPayload(BaseModel):
+    view_data: dict = {}
+    timer: TimerState = TimerState()
+
+
+def _load_dashboard() -> dict:
+    if DASHBOARD_FILE.exists():
+        try:
+            return json.loads(DASHBOARD_FILE.read_text())
+        except Exception:
+            log.exception("Corrupt dashboard.json, starting empty")
+    return {"view_data": {"boards": {}}, "timer": {"state": "stopped"}}
+
+
+_dashboard: dict = _load_dashboard()
+
+
+@app.post("/api/dashboard")
+async def set_dashboard(payload: DashboardPayload):
+    global _dashboard
+    prev = _dashboard or {}
+    prev_timer = prev.get("timer") or {}
+    d = payload.model_dump()
+
+    # Merge boards: a partial push (e.g. only "pairings") must not wipe others.
+    prev_boards = (prev.get("view_data") or {}).get("boards") or {}
+    new_boards = (d.get("view_data") or {}).get("boards") or {}
+    d.setdefault("view_data", {})["boards"] = {**prev_boards, **new_boards}
+
+    t = d.get("timer") or {}
+    if t.get("state") == "running" and t.get("remaining") is not None:
+        # Preserve the countdown across re-posts of the SAME running timer
+        # (e.g. a board push mid-round). Only (re)anchor endsAt on a genuine
+        # start/restart, detected by a changed round or nominal remaining.
+        # ponytail: a manual re-Start with the identical round AND duration
+        # won't reset; add a start-id to the payload if that corner matters.
+        same_timer = (
+            prev_timer.get("state") == "running"
+            and prev_timer.get("endsAt") is not None
+            and prev_timer.get("round") == t.get("round")
+            and prev_timer.get("remaining") == t.get("remaining")
+        )
+        t["endsAt"] = prev_timer["endsAt"] if same_timer else \
+            int(time.time() * 1000) + int(t["remaining"]) * 1000
+    d["timer"] = t
+
+    _dashboard = d
+    tmp = DASHBOARD_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(d, indent=2))
+    tmp.replace(DASHBOARD_FILE)  # atomic
+    return {"ok": True}
+
+
+@app.get("/api/dashboard")
+async def get_dashboard():
+    return _dashboard
+
+
+@app.get("/dashboard")
+async def dashboard_page():
+    return FileResponse(APP_DIR / "static" / "dashboard.html")
 
 
 @app.websocket("/ws")
