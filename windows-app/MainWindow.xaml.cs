@@ -60,6 +60,9 @@ public partial class MainWindow : Window
         finally { BtnConnect.IsEnabled = true; }
     }
 
+    private void OpenSignage_Click(object sender, RoutedEventArgs e)
+        => new SignageWindow { Owner = this }.Show();
+
     private async void BtnScan_Click(object sender, RoutedEventArgs e)
     {
         BtnScan.IsEnabled = false;
