@@ -36,20 +36,27 @@ public partial class SignageWindow : Window
 
     async Task CaptureAndPush((int x, int y, int w, int h) r)
     {
-        Hide();
         try
         {
-            await Task.Delay(200);   // let the desktop repaint with our window gone before grabbing
-            var png = ScreenCapture.CaptureRegion(r.x, r.y, r.w, r.h);
-            ShowPreview(png);        // let the operator see exactly what was grabbed
+            // Go transparent (not Hide()) so we vanish from the screenshot without
+            // the whole window blinking off-screen; reappear right after the grab.
+            Opacity = 0;
+            byte[] png;
+            try
+            {
+                await Task.Delay(150);   // let the compositor drop our window before grabbing
+                png = ScreenCapture.CaptureRegion(r.x, r.y, r.w, r.h);
+            }
+            finally { Opacity = 1; }      // always reappear, even if the grab throws
+
+            ShowPreview(png);            // let the operator see exactly what was grabbed
             var name = $"{Slot}-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}.png";   // globally-unique -> cache-bust
             var path = await _client.UploadMediaAsync(Base, name, png);
             _state.Boards[Slot] = path;
             await _client.PostDashboardAsync(Base, DashboardPayload.Build(_state, _timer));
             Status.Text = $"Pushed {Slot} → {TxtAgent.Text}";
         }
-        catch (Exception ex) { Status.Text = "Push failed: " + ex.Message; }
-        finally { Show(); }
+        catch (Exception ex) { Opacity = 1; Status.Text = "Push failed: " + ex.Message; }
     }
 
     void ShowPreview(byte[] png)
