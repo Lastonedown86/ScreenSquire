@@ -28,6 +28,9 @@ public partial class SignageWindow : Window
             this.ExcludeFromCapture();   // our window never appears in the screenshot
             HydrateFromDevice();         // restore what's already on the device
         };
+        // WPF sometimes sends the owner behind other apps when an owned window
+        // closes — pull the main window back to the front.
+        Closed += (_, _) => Owner?.Activate();
     }
 
     // On (re)open, pull the device's current boards + timer so the app reflects
