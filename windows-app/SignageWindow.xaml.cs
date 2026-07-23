@@ -73,7 +73,11 @@ public partial class SignageWindow : Window
     {
         if (_state.Boards.TryGetValue(Slot, out var path))
         {
-            try { ShowPreview(await _client.GetMediaAsync(Base, path)); return; } catch { }
+            PreviewEmpty.Visibility = Visibility.Collapsed;
+            PreviewBusy.Visibility = Visibility.Visible;     // spinner while fetching this slot's image
+            try { ShowPreview(await _client.GetMediaAsync(Base, path)); return; }
+            catch { }
+            finally { PreviewBusy.Visibility = Visibility.Collapsed; }
         }
         Preview.Source = null;
         PreviewEmpty.Visibility = Visibility.Visible;

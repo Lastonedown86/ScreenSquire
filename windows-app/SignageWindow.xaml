@@ -43,6 +43,9 @@
                 <TextBlock x:Name="PreviewEmpty" Text="No capture yet" Foreground="#777"
                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 <Image x:Name="Preview" Stretch="Uniform" Margin="6"/>
+                <ProgressBar x:Name="PreviewBusy" IsIndeterminate="True" Width="140" Height="6"
+                             HorizontalAlignment="Center" VerticalAlignment="Center"
+                             Visibility="Collapsed"/>
             </Grid>
         </Border>
     </DockPanel>
