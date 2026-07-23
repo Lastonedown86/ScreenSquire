@@ -19,6 +19,7 @@ import logging
 import mimetypes
 import os
 import socket
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -252,6 +253,59 @@ async def kiosk_page():
 
 
 app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
+
+# ---- screenshot dashboard (boards + live timer) ----
+DASHBOARD_FILE = DATA_DIR / "dashboard.json"
+
+
+class TimerState(BaseModel):
+    state: Literal["running", "paused", "stopped"] = "stopped"
+    endsAt: Optional[int] = None       # epoch ms, stamped by the agent when running
+    remaining: Optional[int] = None    # seconds
+    round: Optional[int] = None
+    label: Optional[str] = None
+
+
+class DashboardPayload(BaseModel):
+    view_data: dict = {}
+    timer: TimerState = TimerState()
+
+
+def _load_dashboard() -> dict:
+    if DASHBOARD_FILE.exists():
+        try:
+            return json.loads(DASHBOARD_FILE.read_text())
+        except Exception:
+            log.exception("Corrupt dashboard.json, starting empty")
+    return {"view_data": {"boards": {}}, "timer": {"state": "stopped"}}
+
+
+_dashboard: dict = _load_dashboard()
+
+
+@app.post("/api/dashboard")
+async def set_dashboard(payload: DashboardPayload):
+    global _dashboard
+    d = payload.model_dump()
+    t = d.get("timer") or {}
+    if t.get("state") == "running" and t.get("remaining") is not None:
+        t["endsAt"] = int(time.time() * 1000) + int(t["remaining"]) * 1000
+    d["timer"] = t
+    _dashboard = d
+    tmp = DASHBOARD_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(d, indent=2))
+    tmp.replace(DASHBOARD_FILE)  # atomic
+    return {"ok": True}
+
+
+@app.get("/api/dashboard")
+async def get_dashboard():
+    return _dashboard
+
+
+@app.get("/dashboard")
+async def dashboard_page():
+    return FileResponse(APP_DIR / "static" / "dashboard.html")
 
 
 @app.websocket("/ws")
