@@ -297,19 +297,19 @@ async def set_dashboard(payload: DashboardPayload):
 
     t = d.get("timer") or {}
     if t.get("state") == "running" and t.get("remaining") is not None:
-        # Preserve the countdown across re-posts of the SAME running timer
-        # (e.g. a board push mid-round). Only (re)anchor endsAt on a genuine
-        # start/restart, detected by a changed round or nominal remaining.
-        # ponytail: a manual re-Start with the identical round AND duration
-        # won't reset; add a start-id to the payload if that corner matters.
+        now_ms = int(time.time() * 1000)
+        # Preserve the countdown across re-posts of the SAME still-running timer
+        # (e.g. a board push mid-round). Re-anchor on a genuine start/restart —
+        # a changed round/remaining, OR a stored endsAt that has already expired
+        # (a stale clock must not "resume" as instant TIME).
         same_timer = (
             prev_timer.get("state") == "running"
             and prev_timer.get("endsAt") is not None
+            and prev_timer["endsAt"] > now_ms            # only keep a clock still in the future
             and prev_timer.get("round") == t.get("round")
             and prev_timer.get("remaining") == t.get("remaining")
         )
-        t["endsAt"] = prev_timer["endsAt"] if same_timer else \
-            int(time.time() * 1000) + int(t["remaining"]) * 1000
+        t["endsAt"] = prev_timer["endsAt"] if same_timer else now_ms + int(t["remaining"]) * 1000
     d["timer"] = t
 
     _dashboard = d

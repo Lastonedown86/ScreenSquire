@@ -46,6 +46,17 @@ def test_board_push_preserves_running_timer_endsat():
     e2 = client.get("/api/dashboard").json()["timer"]["endsAt"]
     assert e2 == e1  # countdown NOT reset
 
+def test_expired_timer_reanchors_on_repost():
+    # a stored running timer whose endsAt already passed must not "resume" as TIME
+    main._dashboard = {"view_data": {"boards": {}},
+        "timer": {"state": "running", "endsAt": int(time.time() * 1000) - 60000,
+                  "remaining": 1500, "round": 1, "label": "Round 1"}}
+    client.post("/api/dashboard", json={"view_data": {"boards": {}},
+        "timer": {"state": "running", "remaining": 1500, "round": 1, "label": "Round 1"}})
+    ends = client.get("/api/dashboard").json()["timer"]["endsAt"]
+    assert ends > int(time.time() * 1000)   # re-anchored into the future, not kept expired
+
+
 def test_new_round_reanchors_timer():
     client.post("/api/dashboard", json={"view_data": {"boards": {}},
         "timer": {"state": "running", "remaining": 1500, "round": 1, "label": "Round 1"}})
