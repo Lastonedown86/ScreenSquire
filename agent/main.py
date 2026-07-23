@@ -286,11 +286,32 @@ _dashboard: dict = _load_dashboard()
 @app.post("/api/dashboard")
 async def set_dashboard(payload: DashboardPayload):
     global _dashboard
+    prev = _dashboard or {}
+    prev_timer = prev.get("timer") or {}
     d = payload.model_dump()
+
+    # Merge boards: a partial push (e.g. only "pairings") must not wipe others.
+    prev_boards = (prev.get("view_data") or {}).get("boards") or {}
+    new_boards = (d.get("view_data") or {}).get("boards") or {}
+    d.setdefault("view_data", {})["boards"] = {**prev_boards, **new_boards}
+
     t = d.get("timer") or {}
     if t.get("state") == "running" and t.get("remaining") is not None:
-        t["endsAt"] = int(time.time() * 1000) + int(t["remaining"]) * 1000
+        # Preserve the countdown across re-posts of the SAME running timer
+        # (e.g. a board push mid-round). Only (re)anchor endsAt on a genuine
+        # start/restart, detected by a changed round or nominal remaining.
+        # ponytail: a manual re-Start with the identical round AND duration
+        # won't reset; add a start-id to the payload if that corner matters.
+        same_timer = (
+            prev_timer.get("state") == "running"
+            and prev_timer.get("endsAt") is not None
+            and prev_timer.get("round") == t.get("round")
+            and prev_timer.get("remaining") == t.get("remaining")
+        )
+        t["endsAt"] = prev_timer["endsAt"] if same_timer else \
+            int(time.time() * 1000) + int(t["remaining"]) * 1000
     d["timer"] = t
+
     _dashboard = d
     tmp = DASHBOARD_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(d, indent=2))

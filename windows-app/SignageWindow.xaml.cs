@@ -11,7 +11,6 @@ public partial class SignageWindow : Window
     readonly RoundTimer _timer = new();
     readonly PushClient _client = new(new HttpClient { Timeout = TimeSpan.FromSeconds(10) });
     (int x, int y, int w, int h)? _lastRegion;
-    int _counter;
 
     public SignageWindow() => InitializeComponent();
 
@@ -40,7 +39,7 @@ public partial class SignageWindow : Window
         {
             await Task.Delay(200);   // let the desktop repaint with our window gone before grabbing
             var png = ScreenCapture.CaptureRegion(r.x, r.y, r.w, r.h);
-            var name = $"{Slot}-{++_counter}.png";                 // unique -> cache-bust
+            var name = $"{Slot}-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}.png";   // globally-unique -> cache-bust
             var path = await _client.UploadMediaAsync(Base, name, png);
             _state.Boards[Slot] = path;
             await _client.PostDashboardAsync(Base, DashboardPayload.Build(_state, _timer));
