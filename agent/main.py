@@ -343,6 +343,7 @@ async def _run(cmd: list[str], timeout: float = 30.0) -> tuple[int, str, str]:
         out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
         proc.kill()
+        await proc.wait()
         return 124, "", "timed out"
     return proc.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
 
@@ -361,7 +362,8 @@ async def _wlan_ssid() -> Optional[str]:
     _, out, _ = await _run(["nmcli", "-t", "-f", "GENERAL.CONNECTION", "dev", "show", "wlan0"], timeout=5)
     for line in out.splitlines():
         if line.startswith("GENERAL.CONNECTION:"):
-            return (line.split(":", 1)[1].strip() or None)
+            v = line.split(":", 1)[1].strip()
+            return v if v and v != "--" else None
     return None
 
 

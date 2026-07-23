@@ -37,6 +37,8 @@ port=0
 interface=usb0
 bind-dynamic
 dhcp-range=10.55.0.10,10.55.0.20,255.255.255.0,1h
+dhcp-option=3
+dhcp-option=6
 EOF
 
 # 6. Allow the agent's user to drive nmcli without a password (validated before install)
