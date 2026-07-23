@@ -63,7 +63,6 @@ public partial class WifiSetupWindow : Window
                 try
                 {
                     using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-                    var st = await http.GetFromJsonAsync<PiSignage.Signage.WifiStatus>(PiUsbBase.TrimEnd('/') + "/api/wifi/status");
                     // get the Pi's name from /api/status over the USB link
                     var nameDoc = await http.GetStringAsync(PiUsbBase.TrimEnd('/') + "/api/status");
                     using var doc = System.Text.Json.JsonDocument.Parse(nameDoc);

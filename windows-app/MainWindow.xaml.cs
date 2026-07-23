@@ -71,6 +71,8 @@ public partial class MainWindow : Window
                 new PiSignage.Signage.SavedDevice { Name = status.Name, Hostname = status.Name, Ip = addr });
             SaveDevices();
             ReloadDevices();
+            CmbAddress.SelectedItem = _devices.FirstOrDefault(d =>
+                string.Equals(d.Hostname, status.Name, System.StringComparison.OrdinalIgnoreCase));
         }
     }
 
@@ -168,9 +170,9 @@ public partial class MainWindow : Window
 
     void AddPi_Click(object sender, System.Windows.RoutedEventArgs e)
     {
-        var w = new WifiSetupWindow { Owner = this };
-        w.Closed += (_, _) => { Activate(); ReloadDevices(); };   // show the newly-provisioned Pi
-        w.Show();
+        new WifiSetupWindow { Owner = this }.ShowDialog();   // modal: no concurrent device-file writes
+        Activate();
+        ReloadDevices();   // show the newly-provisioned Pi
     }
 
     private async void BtnScan_Click(object sender, RoutedEventArgs e)
@@ -196,6 +198,7 @@ public partial class MainWindow : Window
             ReloadDevices();
             if (_devices.Count == 0) LblStatus.Text = "No devices found — type the Pi's address manually";
         }
+        catch (System.Exception ex) { LblStatus.Text = "Scan failed: " + ex.Message; }
         finally
         {
             BtnScan.IsEnabled = true;
