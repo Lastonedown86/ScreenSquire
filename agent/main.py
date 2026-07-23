@@ -329,6 +329,64 @@ async def dashboard_page():
     return FileResponse(APP_DIR / "static" / "dashboard.html")
 
 
+# ---- WiFi provisioning (USB setup) ----
+class WifiRequest(BaseModel):
+    ssid: str
+    password: str
+
+
+async def _run(cmd: list[str], timeout: float = 30.0) -> tuple[int, str, str]:
+    """Run a command with a timeout. Returns (returncode, stdout, stderr)."""
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        return 124, "", "timed out"
+    return proc.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
+
+
+async def _wlan_ip() -> Optional[str]:
+    _, out, _ = await _run(["nmcli", "-t", "-f", "IP4.ADDRESS", "dev", "show", "wlan0"], timeout=5)
+    for line in out.splitlines():
+        if ":" in line:
+            val = line.split(":", 1)[1].strip()
+            if val:
+                return val.split("/")[0]
+    return None
+
+
+async def _wlan_ssid() -> Optional[str]:
+    _, out, _ = await _run(["nmcli", "-t", "-f", "GENERAL.CONNECTION", "dev", "show", "wlan0"], timeout=5)
+    for line in out.splitlines():
+        if line.startswith("GENERAL.CONNECTION:"):
+            return (line.split(":", 1)[1].strip() or None)
+    return None
+
+
+@app.post("/api/wifi")
+async def set_wifi(req: WifiRequest):
+    rc, out, err = await _run(
+        ["sudo", "nmcli", "dev", "wifi", "connect", req.ssid,
+         "password", req.password, "ifname", "wlan0"],
+        timeout=30.0,
+    )
+    if rc != 0:
+        # never echo the password back
+        return {"ok": False, "connected": False, "ip": None,
+                "error": (err.strip() or out.strip() or "connect failed")}
+    ip = await _wlan_ip()
+    return {"ok": True, "connected": ip is not None, "ip": ip, "error": None}
+
+
+@app.get("/api/wifi/status")
+async def wifi_status():
+    ssid = await _wlan_ssid()
+    ip = await _wlan_ip()
+    return {"connected": ip is not None, "ssid": ssid, "ip": ip}
+
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await hub.register(ws)
