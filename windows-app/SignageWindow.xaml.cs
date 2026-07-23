@@ -32,12 +32,16 @@ public partial class SignageWindow : Window
 
     // On (re)open, pull the device's current boards + timer so the app reflects
     // what the TV is still showing after the window was closed.
+    void SetBusy(bool on) => Busy.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+
     async void HydrateFromDevice()
     {
+        SetBusy(true);
+        Status.Text = "Loading from device…";
         try
         {
             var snap = await _client.GetDashboardAsync(Base);
-            if (snap is null) return;
+            if (snap is null) { Status.Text = "Nothing on the device yet"; return; }
 
             _state.Boards.Clear();
             foreach (var kv in snap.view_data.boards) _state.Boards[kv.Key] = kv.Value;
@@ -59,6 +63,7 @@ public partial class SignageWindow : Window
                 : "Nothing on the device yet";
         }
         catch { Status.Text = "Device not reachable — nothing restored"; }
+        finally { SetBusy(false); }
     }
 
     async Task PreviewSlot()
@@ -105,17 +110,20 @@ public partial class SignageWindow : Window
     {
         // No hide/opacity/delay: the window is excluded from capture, so we grab
         // instantly and the app stays put (no blink, no z-order change).
+        SetBusy(true);
         try
         {
             var png = ScreenCapture.CaptureRegion(r.x, r.y, r.w, r.h);
             ShowPreview(png);            // let the operator see exactly what was grabbed
             var name = $"{Slot}-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}.png";   // globally-unique -> cache-bust
+            Status.Text = $"Pushing {Slot}…";
             var path = await _client.UploadMediaAsync(Base, name, png);
             _state.Boards[Slot] = path;
             await _client.PostDashboardAsync(Base, DashboardPayload.Build(_state, _timer));
             Status.Text = $"Pushed {Slot} → {TxtAgent.Text}";
         }
         catch (Exception ex) { Status.Text = "Push failed: " + ex.Message; }
+        finally { SetBusy(false); }
     }
 
     void ShowPreview(byte[] png)

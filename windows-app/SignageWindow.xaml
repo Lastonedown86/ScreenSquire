@@ -4,6 +4,8 @@
         Title="Tournament Signage" Height="820" Width="720"
         MinHeight="560" MinWidth="480">
     <DockPanel Margin="14" LastChildFill="True">
+        <ProgressBar x:Name="Busy" DockPanel.Dock="Top" Height="4" IsIndeterminate="True"
+                     Visibility="Collapsed" Margin="0,0,0,8"/>
         <StackPanel DockPanel.Dock="Top">
             <TextBlock Text="Target Pi (host:port)"/>
             <TextBox x:Name="TxtAgent" Text="localhost:8080" Margin="0,2,0,10"/>
