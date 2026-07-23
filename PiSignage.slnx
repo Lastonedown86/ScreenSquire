@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/windows-app/">
+    <Project Path="windows-app/PiSignageControl.csproj" />
+  </Folder>
+  <Project Path="signage-core.Tests/signage-core.Tests.csproj" />
+  <Project Path="signage-core/signage-core.csproj" />
+</Solution>
