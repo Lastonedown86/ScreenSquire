@@ -75,7 +75,13 @@ public partial class SignageWindow : Window
         {
             PreviewEmpty.Visibility = Visibility.Collapsed;
             PreviewBusy.Visibility = Visibility.Visible;     // spinner while fetching this slot's image
-            try { ShowPreview(await _client.GetMediaAsync(Base, path)); return; }
+            try
+            {
+                var fetch = _client.GetMediaAsync(Base, path);
+                await Task.WhenAll(fetch, Task.Delay(300));  // keep the spinner visible even on an instant (localhost) fetch
+                ShowPreview(await fetch);
+                return;
+            }
             catch { }
             finally { PreviewBusy.Visibility = Visibility.Collapsed; }
         }
