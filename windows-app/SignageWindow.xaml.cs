@@ -21,9 +21,7 @@ public partial class SignageWindow : Window
     async void Capture_Click(object s, RoutedEventArgs e)
     {
         var sel = new RegionSelectorWindow { Owner = this };
-        Hide();                       // get our own window out of the shot
         var ok = sel.ShowDialog();
-        Show();
         if (ok != true || sel.Result is null) return;
         _lastRegion = sel.Result;
         BtnRecapture.IsEnabled = true;
@@ -37,9 +35,17 @@ public partial class SignageWindow : Window
 
     async Task CaptureAndPush((int x, int y, int w, int h) r)
     {
+        byte[] png;
+        Hide();
         try
         {
-            var png = ScreenCapture.CaptureRegion(r.x, r.y, r.w, r.h);
+            await Task.Delay(200);   // let the desktop repaint with our window gone
+            png = ScreenCapture.CaptureRegion(r.x, r.y, r.w, r.h);
+        }
+        finally { Show(); }
+
+        try
+        {
             var name = $"{Slot}-{++_counter}.png";                 // unique -> cache-bust
             var path = await _client.UploadMediaAsync(Base, name, png);
             _state.Boards[Slot] = path;
