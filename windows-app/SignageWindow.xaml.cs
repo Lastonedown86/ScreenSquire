@@ -23,6 +23,53 @@ public partial class SignageWindow : Window
         _clockTick = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         _clockTick.Tick += (_, _) => UpdateClock();
         _clockTick.Start();
+        Loaded += (_, _) => HydrateFromDevice();   // restore what's already on the device
+    }
+
+    // On (re)open, pull the device's current boards + timer so the app reflects
+    // what the TV is still showing after the window was closed.
+    async void HydrateFromDevice()
+    {
+        try
+        {
+            var snap = await _client.GetDashboardAsync(Base);
+            if (snap is null) return;
+
+            _state.Boards.Clear();
+            foreach (var kv in snap.view_data.boards) _state.Boards[kv.Key] = kv.Value;
+
+            if (snap.timer.state == "running" && snap.timer.endsAt is { } ends)
+            {
+                _timer.RestoreRunning(snap.timer.remaining ?? 0, snap.timer.round, snap.timer.label);
+                _endsAtLocal = DateTimeOffset.FromUnixTimeMilliseconds(ends).UtcDateTime;
+                if (snap.timer.round is { } rd) TxtRound.Text = rd.ToString();
+            }
+            else { _timer.Stop(); _endsAtLocal = null; }
+            UpdateClock();
+
+            await PreviewSlot();   // show the currently-selected slot's board
+
+            int n = _state.Boards.Count;
+            Status.Text = (n > 0 || _endsAtLocal is not null)
+                ? $"Restored from device ({n} board{(n == 1 ? "" : "s")}{(_endsAtLocal is not null ? ", timer running" : "")})"
+                : "Nothing on the device yet";
+        }
+        catch { Status.Text = "Device not reachable — nothing restored"; }
+    }
+
+    async Task PreviewSlot()
+    {
+        if (_state.Boards.TryGetValue(Slot, out var path))
+        {
+            try { ShowPreview(await _client.GetMediaAsync(Base, path)); return; } catch { }
+        }
+        Preview.Source = null;
+        PreviewEmpty.Visibility = Visibility.Visible;
+    }
+
+    async void Slot_Changed(object s, SelectionChangedEventArgs e)
+    {
+        if (IsLoaded) await PreviewSlot();   // show the newly-selected slot's board
     }
 
     void UpdateClock()

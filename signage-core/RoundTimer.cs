@@ -20,4 +20,9 @@ public sealed class RoundTimer
 
     public void Stop()
     { State = TimerRunState.Stopped; RemainingSeconds = null; }
+
+    // Restore a running timer's identity from the device so a later board push
+    // re-posts the SAME round+remaining and the agent preserves its endsAt.
+    public void RestoreRunning(int remainingSeconds, int? round, string? label)
+    { State = TimerRunState.Running; RemainingSeconds = remainingSeconds; Round = round; Label = label; }
 }

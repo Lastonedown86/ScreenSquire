@@ -33,4 +33,15 @@ public class RoundTimerTests
         Assert.Equal(TimerRunState.Stopped, t.State);
         Assert.Null(t.RemainingSeconds);
     }
+
+    [Fact]
+    public void RestoreRunningSetsAllFields()
+    {
+        var t = new RoundTimer();
+        t.RestoreRunning(600, 3, "Round 3");
+        Assert.Equal(TimerRunState.Running, t.State);
+        Assert.Equal(600, t.RemainingSeconds);
+        Assert.Equal(3, t.Round);
+        Assert.Equal("Round 3", t.Label);
+    }
 }

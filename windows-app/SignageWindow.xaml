@@ -9,7 +9,7 @@
             <TextBox x:Name="TxtAgent" Text="localhost:8080" Margin="0,2,0,10"/>
 
             <TextBlock Text="Capture slot"/>
-            <ComboBox x:Name="CmbSlot" SelectedIndex="0" Margin="0,2,0,10">
+            <ComboBox x:Name="CmbSlot" SelectedIndex="0" Margin="0,2,0,10" SelectionChanged="Slot_Changed">
                 <ComboBoxItem>pairings</ComboBoxItem>
                 <ComboBoxItem>standings</ComboBoxItem>
             </ComboBox>
