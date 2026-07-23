@@ -13,6 +13,8 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<MediaFile> _media = new();
     private readonly ObservableCollection<PlaylistItem> _playlist = new();
     private bool _dirty;
+    private readonly PiSignage.Signage.DeviceStore _deviceStore = new();
+    private System.Collections.Generic.List<PiSignage.Signage.SavedDevice> _devices = new();
 
     public MainWindow()
     {
@@ -22,43 +24,131 @@ public partial class MainWindow : Window
         LstPlaylist.ItemsSource = _playlist;
         _playlist.CollectionChanged += (_, _) => SetDirty(true);
         _poll.Tick += async (_, _) => await RefreshStatusAsync();
+        ReloadDevices();
     }
+
+    private void ReloadDevices()
+    {
+        _devices = _deviceStore.Load();
+        var keep = CmbAddress.SelectedItem;
+        CmbAddress.ItemsSource = _devices;
+        if (keep != null && _devices.Contains(keep)) CmbAddress.SelectedItem = keep;
+    }
+
+    private void SaveDevices() => _deviceStore.Save(_devices);
 
     // ---------------------------------------------------------- connect
     private async void BtnConnect_Click(object sender, RoutedEventArgs e)
     {
+        if (CmbAddress.SelectedItem is PiSignage.Signage.SavedDevice dev)
+        {
+            await ConnectToDeviceAsync(dev);
+            return;
+        }
         var addr = CmbAddress.Text.Trim();
         if (addr.Length == 0) return;
-
-        // allow "host:port"
         int port = 8080;
         var parts = addr.Split(':');
         if (parts.Length == 2 && int.TryParse(parts[1], out var p)) { addr = parts[0]; port = p; }
 
+        var status = await ConnectHostAsync(addr, port);
+        if (status != null && !string.IsNullOrWhiteSpace(status.Name))
+        {
+            _devices = PiSignage.Signage.DeviceStore.Upsert(_devices,
+                new PiSignage.Signage.SavedDevice { Name = status.Name, Hostname = status.Name, Ip = addr });
+            SaveDevices();
+            ReloadDevices();
+        }
+    }
+
+    // Try dev.Ip; on failure, re-resolve by hostname over mDNS, update Ip, retry.
+    private async Task ConnectToDeviceAsync(PiSignage.Signage.SavedDevice dev)
+    {
+        var status = await ConnectHostAsync(dev.Ip, 8080);
+        if (status == null)
+        {
+            LblStatus.Text = $"{dev.Name} not at {dev.Ip} — searching…";
+            var newIp = await ResolveByHostnameAsync(dev.Hostname);
+            if (newIp != null)
+            {
+                status = await ConnectHostAsync(newIp, 8080);
+                if (status != null) { dev.Ip = newIp; SaveDevices(); }
+            }
+        }
+        if (status == null)
+            MessageBox.Show(this, $"Couldn't reach {dev.Name}. Try Scan network.",
+                "Not found", MessageBoxButton.OK, MessageBoxImage.Warning);
+    }
+
+    // Core connect: returns StatusInfo on success (and wires up the UI), else null.
+    private async Task<StatusInfo?> ConnectHostAsync(string host, int port)
+    {
         BtnConnect.IsEnabled = false;
-        LblStatus.Text = $"Connecting to {addr}…";
+        LblStatus.Text = $"Connecting to {host}…";
         try
         {
             _api?.Dispose();
-            _api = new ApiClient(addr, port);
-            var status = await _api.GetStatusAsync()
-                         ?? throw new HttpRequestException("Empty response");
+            _api = new ApiClient(host, port);
+            var status = await _api.GetStatusAsync() ?? throw new HttpRequestException("Empty response");
             LblStatus.Text = $"Connected: {status.Name}";
             MainArea.IsEnabled = true;
             await ReloadMediaAsync();
             await ReloadPlaylistAsync();
             await RefreshStatusAsync();
             _poll.Start();
+            return status;
         }
-        catch (Exception ex)
+        catch
         {
             _poll.Stop();
             MainArea.IsEnabled = false;
             LblStatus.Text = "Not connected";
-            MessageBox.Show(this, $"Could not reach the Pi at {addr}:{port}.\n\n{ex.Message}",
-                "Connection failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return null;
         }
         finally { BtnConnect.IsEnabled = true; }
+    }
+
+    // Scan mDNS, GET /api/status on each, return the IP whose Pi name matches.
+    private async Task<string?> ResolveByHostnameAsync(string hostname)
+    {
+        try
+        {
+            var devices = await MdnsDiscovery.ScanAsync(TimeSpan.FromSeconds(3));
+            foreach (var d in devices)
+            {
+                try
+                {
+                    using var probe = new ApiClient(d.Address, d.Port);
+                    var s = await probe.GetStatusAsync();
+                    if (s != null && string.Equals(s.Name, hostname, StringComparison.OrdinalIgnoreCase))
+                        return d.Address;
+                }
+                catch { }
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    private void BtnRename_Click(object sender, RoutedEventArgs e)
+    {
+        if (CmbAddress.SelectedItem is not PiSignage.Signage.SavedDevice dev) return;
+        var name = TextPrompt.Ask(this, "New name for this Pi:", dev.Name);
+        if (name == null) return;
+        dev.Name = name;
+        SaveDevices();
+        ReloadDevices();
+        CmbAddress.SelectedItem = dev;
+    }
+
+    private void BtnForget_Click(object sender, RoutedEventArgs e)
+    {
+        if (CmbAddress.SelectedItem is not PiSignage.Signage.SavedDevice dev) return;
+        if (MessageBox.Show(this, $"Forget {dev.Name}?", "Confirm",
+                MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        _devices.Remove(dev);
+        SaveDevices();
+        ReloadDevices();
     }
 
     private void OpenSignage_Click(object sender, RoutedEventArgs e)
@@ -77,14 +167,22 @@ public partial class MainWindow : Window
         BtnScan.Content = "Scanning…";
         try
         {
-            var devices = await MdnsDiscovery.ScanAsync(TimeSpan.FromSeconds(3));
-            CmbAddress.Items.Clear();
-            foreach (var d in devices)
-                CmbAddress.Items.Add($"{d.Address}:{d.Port}");
-            if (devices.Count > 0)
-                CmbAddress.SelectedIndex = 0;
-            else
-                LblStatus.Text = "No devices found — type the Pi's address manually";
+            var found = await MdnsDiscovery.ScanAsync(TimeSpan.FromSeconds(3));
+            foreach (var d in found)
+            {
+                try
+                {
+                    using var probe = new ApiClient(d.Address, d.Port);
+                    var s = await probe.GetStatusAsync();
+                    if (s != null && !string.IsNullOrWhiteSpace(s.Name))
+                        _devices = PiSignage.Signage.DeviceStore.Upsert(_devices,
+                            new PiSignage.Signage.SavedDevice { Name = s.Name, Hostname = s.Name, Ip = d.Address });
+                }
+                catch { }
+            }
+            SaveDevices();
+            ReloadDevices();
+            if (_devices.Count == 0) LblStatus.Text = "No devices found — type the Pi's address manually";
         }
         finally
         {
