@@ -23,7 +23,11 @@ public partial class SignageWindow : Window
         _clockTick = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         _clockTick.Tick += (_, _) => UpdateClock();
         _clockTick.Start();
-        Loaded += (_, _) => HydrateFromDevice();   // restore what's already on the device
+        Loaded += (_, _) =>
+        {
+            this.ExcludeFromCapture();   // our window never appears in the screenshot
+            HydrateFromDevice();         // restore what's already on the device
+        };
     }
 
     // On (re)open, pull the device's current boards + timer so the app reflects
@@ -99,19 +103,11 @@ public partial class SignageWindow : Window
 
     async Task CaptureAndPush((int x, int y, int w, int h) r)
     {
+        // No hide/opacity/delay: the window is excluded from capture, so we grab
+        // instantly and the app stays put (no blink, no z-order change).
         try
         {
-            // Go transparent (not Hide()) so we vanish from the screenshot without
-            // the whole window blinking off-screen; reappear right after the grab.
-            Opacity = 0;
-            byte[] png;
-            try
-            {
-                await Task.Delay(150);   // let the compositor drop our window before grabbing
-                png = ScreenCapture.CaptureRegion(r.x, r.y, r.w, r.h);
-            }
-            finally { Opacity = 1; }      // always reappear, even if the grab throws
-
+            var png = ScreenCapture.CaptureRegion(r.x, r.y, r.w, r.h);
             ShowPreview(png);            // let the operator see exactly what was grabbed
             var name = $"{Slot}-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}.png";   // globally-unique -> cache-bust
             var path = await _client.UploadMediaAsync(Base, name, png);
@@ -119,7 +115,7 @@ public partial class SignageWindow : Window
             await _client.PostDashboardAsync(Base, DashboardPayload.Build(_state, _timer));
             Status.Text = $"Pushed {Slot} → {TxtAgent.Text}";
         }
-        catch (Exception ex) { Opacity = 1; Status.Text = "Push failed: " + ex.Message; }
+        catch (Exception ex) { Status.Text = "Push failed: " + ex.Message; }
     }
 
     void ShowPreview(byte[] png)

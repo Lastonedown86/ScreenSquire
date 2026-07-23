@@ -15,6 +15,7 @@ public partial class RegionSelectorWindow : Window
     public RegionSelectorWindow()
     {
         InitializeComponent();
+        Loaded += (_, _) => this.ExcludeFromCapture();   // overlay never lands in a screenshot
         MouseLeftButtonDown += OnDown;
         MouseMove += OnMove;
         MouseLeftButtonUp += OnUp;
