@@ -169,7 +169,7 @@ public partial class MainWindow : Window
     void AddPi_Click(object sender, System.Windows.RoutedEventArgs e)
     {
         var w = new WifiSetupWindow { Owner = this };
-        w.Closed += (_, _) => Activate();   // keep main window in front on close
+        w.Closed += (_, _) => { Activate(); ReloadDevices(); };   // show the newly-provisioned Pi
         w.Show();
     }
 

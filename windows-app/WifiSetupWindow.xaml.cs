@@ -1,4 +1,5 @@
 using System.Net.Http;
+using System.Net.Http.Json;
 using System.Windows;
 using System.Windows.Media;
 using PiSignage.Signage;
@@ -58,6 +59,21 @@ public partial class WifiSetupWindow : Window
             {
                 Result.Foreground = Brushes.Green;
                 Result.Text = $"Connected — this Pi is on {TxtSsid.Text.Trim()} at {r.Ip}. You can unplug the USB cable.";
+
+                try
+                {
+                    using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+                    var st = await http.GetFromJsonAsync<PiSignage.Signage.WifiStatus>(PiUsbBase.TrimEnd('/') + "/api/wifi/status");
+                    // get the Pi's name from /api/status over the USB link
+                    var nameDoc = await http.GetStringAsync(PiUsbBase.TrimEnd('/') + "/api/status");
+                    using var doc = System.Text.Json.JsonDocument.Parse(nameDoc);
+                    var piName = doc.RootElement.GetProperty("name").GetString() ?? "pi";
+                    var store = new PiSignage.Signage.DeviceStore();
+                    var list = PiSignage.Signage.DeviceStore.Upsert(store.Load(),
+                        new PiSignage.Signage.SavedDevice { Name = piName, Hostname = piName, Ip = r.Ip! });
+                    store.Save(list);
+                }
+                catch { /* saving to the list is best-effort; the WiFi connect already succeeded */ }
             }
             else
             {
