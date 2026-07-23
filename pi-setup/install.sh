@@ -82,6 +82,8 @@ PartOf=graphical-session.target
 [Service]
 Environment=WAYLAND_DISPLAY=wayland-0
 ExecStart=$APP_DIR/kiosk.sh
+# make sure stopping the kiosk really clears Chromium off the screen
+ExecStopPost=-/usr/bin/pkill -f chromium
 Restart=always
 RestartSec=2
 
