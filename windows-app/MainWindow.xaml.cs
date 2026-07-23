@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Net.Http;
 using System.Windows;
 using System.Windows.Threading;
@@ -29,13 +30,19 @@ public partial class MainWindow : Window
 
     private void ReloadDevices()
     {
+        var keepHost = (CmbAddress.SelectedItem as PiSignage.Signage.SavedDevice)?.Hostname;
         _devices = _deviceStore.Load();
-        var keep = CmbAddress.SelectedItem;
         CmbAddress.ItemsSource = _devices;
-        if (keep != null && _devices.Contains(keep)) CmbAddress.SelectedItem = keep;
+        if (keepHost != null)
+            CmbAddress.SelectedItem = _devices.FirstOrDefault(d =>
+                string.Equals(d.Hostname, keepHost, System.StringComparison.OrdinalIgnoreCase));
     }
 
-    private void SaveDevices() => _deviceStore.Save(_devices);
+    private void SaveDevices()
+    {
+        try { _deviceStore.Save(_devices); }
+        catch (System.Exception ex) { LblStatus.Text = "Could not save device list: " + ex.Message; }
+    }
 
     // ---------------------------------------------------------- connect
     private async void BtnConnect_Click(object sender, RoutedEventArgs e)
@@ -52,7 +59,13 @@ public partial class MainWindow : Window
         if (parts.Length == 2 && int.TryParse(parts[1], out var p)) { addr = parts[0]; port = p; }
 
         var status = await ConnectHostAsync(addr, port);
-        if (status != null && !string.IsNullOrWhiteSpace(status.Name))
+        if (status == null)
+        {
+            MessageBox.Show(this, $"Could not reach the Pi at {addr}:{port}.",
+                "Connection failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        if (!string.IsNullOrWhiteSpace(status.Name))
         {
             _devices = PiSignage.Signage.DeviceStore.Upsert(_devices,
                 new PiSignage.Signage.SavedDevice { Name = status.Name, Hostname = status.Name, Ip = addr });
@@ -138,7 +151,6 @@ public partial class MainWindow : Window
         dev.Name = name;
         SaveDevices();
         ReloadDevices();
-        CmbAddress.SelectedItem = dev;
     }
 
     private void BtnForget_Click(object sender, RoutedEventArgs e)
