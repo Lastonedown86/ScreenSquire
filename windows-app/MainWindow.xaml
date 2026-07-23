@@ -17,6 +17,7 @@
                 <TextBlock Text="Device:" VerticalAlignment="Center" Margin="0,0,6,0" FontWeight="SemiBold"/>
                 <Button Content="Tournament Signage" DockPanel.Dock="Right" Margin="8,0,0,0" Click="OpenSignage_Click"/>
                 <Button Content="Add a Pi" DockPanel.Dock="Right" Margin="8,0,0,0" Click="AddPi_Click"/>
+                <Button Content="Remote control" DockPanel.Dock="Right" Margin="8,0,0,0" Click="BtnRemote_Click"/>
                 <Button x:Name="BtnScan" Content="Scan network" DockPanel.Dock="Right" Click="BtnScan_Click"/>
                 <Button x:Name="BtnForget" Content="Forget" DockPanel.Dock="Right" Margin="4,0,0,0" Click="BtnForget_Click"/>
                 <Button x:Name="BtnRename" Content="Rename" DockPanel.Dock="Right" Margin="4,0,0,0" Click="BtnRename_Click"/>

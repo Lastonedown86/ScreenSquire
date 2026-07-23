@@ -175,6 +175,37 @@ public partial class MainWindow : Window
         ReloadDevices();   // show the newly-provisioned Pi
     }
 
+    // Open a VNC session to the selected Pi so staff can drive the TV with kb/mouse.
+    void BtnRemote_Click(object sender, RoutedEventArgs e)
+    {
+        if (CmbAddress.SelectedItem is not PiSignage.Signage.SavedDevice dev)
+        {
+            MessageBox.Show(this, "Pick a saved Pi from the list first.", "Remote control",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        var viewer = PiSignage.Signage.VncLauncher.FindViewer(PiSignage.Signage.VncLauncher.DefaultViewerPaths());
+        if (viewer == null)
+        {
+            if (MessageBox.Show(this,
+                    "No VNC viewer is installed. Install RealVNC Viewer now? (a winget window will open)",
+                    "Remote control", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+            {
+                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+                    "winget", "install --id RealVNC.VNCViewer -e") { UseShellExecute = true }); }
+                catch (System.Exception ex) { MessageBox.Show(this, "Couldn't launch winget: " + ex.Message); }
+            }
+            return;
+        }
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+                viewer, PiSignage.Signage.VncLauncher.Target(dev.Ip)) { UseShellExecute = false });
+            LblStatus.Text = $"Opening remote control for {dev.Name} ({dev.Ip}:{PiSignage.Signage.VncLauncher.Port})…";
+        }
+        catch (System.Exception ex) { MessageBox.Show(this, "Couldn't open the viewer: " + ex.Message); }
+    }
+
     private async void BtnScan_Click(object sender, RoutedEventArgs e)
     {
         BtnScan.IsEnabled = false;
