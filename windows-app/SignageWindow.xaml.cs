@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using PiSignage.Signage;
 
 namespace PiSignage.Control;
@@ -13,8 +14,23 @@ public partial class SignageWindow : Window
     readonly RoundTimer _timer = new();
     readonly PushClient _client = new(new HttpClient { Timeout = TimeSpan.FromSeconds(10) });
     (int x, int y, int w, int h)? _lastRegion;
+    DateTime? _endsAtLocal;                 // app-side countdown target (mirrors the TV)
+    readonly DispatcherTimer _clockTick;
 
-    public SignageWindow() => InitializeComponent();
+    public SignageWindow()
+    {
+        InitializeComponent();
+        _clockTick = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _clockTick.Tick += (_, _) => UpdateClock();
+        _clockTick.Start();
+    }
+
+    void UpdateClock()
+    {
+        if (_endsAtLocal is not { } end) { ClockDisplay.Text = "—:—"; return; }
+        var rem = (int)Math.Round((end - DateTime.UtcNow).TotalSeconds);
+        ClockDisplay.Text = rem <= 0 ? "TIME" : $"{rem / 60:00}:{rem % 60:00}";
+    }
 
     string Slot => ((ComboBoxItem)CmbSlot.SelectedItem).Content!.ToString()!;
     string Base => "http://" + TxtAgent.Text.Trim();
@@ -79,12 +95,16 @@ public partial class SignageWindow : Window
         int min = int.TryParse(TxtMinutes.Text, out var m) ? m : 25;
         int round = int.TryParse(TxtRound.Text, out var rd) ? rd : 1;
         _timer.Start(min, $"Round {round}", round);
+        _endsAtLocal = DateTime.UtcNow.AddSeconds(min * 60);
+        UpdateClock();
         await Post("Timer started");
     }
 
     async void StopTimer_Click(object s, RoutedEventArgs e)
     {
         _timer.Stop();
+        _endsAtLocal = null;
+        UpdateClock();
         await Post("Timer stopped");
     }
 

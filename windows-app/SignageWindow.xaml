@@ -21,11 +21,13 @@
             </StackPanel>
 
             <TextBlock Text="Round timer"/>
-            <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
-                <TextBox x:Name="TxtMinutes" Text="25" Width="46"/>
-                <TextBox x:Name="TxtRound" Text="1" Width="46" Margin="6,0,0,0"/>
+            <StackPanel Orientation="Horizontal" Margin="0,2,0,0" VerticalAlignment="Center">
+                <TextBox x:Name="TxtMinutes" Text="25" Width="46" VerticalAlignment="Center"/>
+                <TextBox x:Name="TxtRound" Text="1" Width="46" Margin="6,0,0,0" VerticalAlignment="Center"/>
                 <Button Content="Start" Click="StartTimer_Click" Margin="6,0,0,0" Padding="8,2"/>
                 <Button Content="Stop" Click="StopTimer_Click" Margin="6,0,0,0" Padding="8,2"/>
+                <TextBlock x:Name="ClockDisplay" Text="—:—" FontSize="30" FontWeight="Bold"
+                           FontFamily="Consolas" Margin="16,0,0,0" VerticalAlignment="Center"/>
             </StackPanel>
 
             <TextBlock x:Name="Status" Margin="0,12,0,0" Foreground="#666" TextWrapping="Wrap"/>
