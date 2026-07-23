@@ -3,6 +3,13 @@
 set -euo pipefail
 
 USER_NAME="${SUDO_USER:-$USER}"
+WIFI_COUNTRY="${WIFI_COUNTRY:-US}"   # override for non-US: WIFI_COUNTRY=GB bash provision-usb.sh
+
+# 0. Enable the WiFi radio out of the box. Raspberry Pi OS soft-blocks WiFi until
+#    the regulatory country is set — without this the customer's setup wizard sees
+#    NO networks ("not found") even though the radio hardware is fine.
+sudo raspi-config nonint do_wifi_country "$WIFI_COUNTRY"
+sudo rfkill unblock wifi 2>/dev/null || true
 
 # 1. USB gadget requires dwc2
 grep -q '^dtoverlay=dwc2,dr_mode=peripheral' /boot/firmware/config.txt 2>/dev/null || \
