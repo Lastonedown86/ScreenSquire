@@ -64,6 +64,13 @@ public partial class MainWindow : Window
     private void OpenSignage_Click(object sender, RoutedEventArgs e)
         => new SignageWindow { Owner = this }.Show();
 
+    void AddPi_Click(object sender, System.Windows.RoutedEventArgs e)
+    {
+        var w = new WifiSetupWindow { Owner = this };
+        w.Closed += (_, _) => Activate();   // keep main window in front on close
+        w.Show();
+    }
+
     private async void BtnScan_Click(object sender, RoutedEventArgs e)
     {
         BtnScan.IsEnabled = false;
