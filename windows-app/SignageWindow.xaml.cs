@@ -1,6 +1,8 @@
+using System.IO;
 using System.Net.Http;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media.Imaging;
 using PiSignage.Signage;
 
 namespace PiSignage.Control;
@@ -39,6 +41,7 @@ public partial class SignageWindow : Window
         {
             await Task.Delay(200);   // let the desktop repaint with our window gone before grabbing
             var png = ScreenCapture.CaptureRegion(r.x, r.y, r.w, r.h);
+            ShowPreview(png);        // let the operator see exactly what was grabbed
             var name = $"{Slot}-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}.png";   // globally-unique -> cache-bust
             var path = await _client.UploadMediaAsync(Base, name, png);
             _state.Boards[Slot] = path;
@@ -47,6 +50,21 @@ public partial class SignageWindow : Window
         }
         catch (Exception ex) { Status.Text = "Push failed: " + ex.Message; }
         finally { Show(); }
+    }
+
+    void ShowPreview(byte[] png)
+    {
+        var img = new BitmapImage();
+        using (var ms = new MemoryStream(png))
+        {
+            img.BeginInit();
+            img.CacheOption = BitmapCacheOption.OnLoad;   // decode now so the stream can close
+            img.StreamSource = ms;
+            img.EndInit();
+        }
+        img.Freeze();
+        Preview.Source = img;
+        PreviewEmpty.Visibility = Visibility.Collapsed;
     }
 
     async void StartTimer_Click(object s, RoutedEventArgs e)
