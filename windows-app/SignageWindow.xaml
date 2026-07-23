@@ -7,8 +7,9 @@
         <ProgressBar x:Name="Busy" DockPanel.Dock="Top" Height="4" IsIndeterminate="True"
                      Visibility="Collapsed" Margin="0,0,0,8"/>
         <StackPanel DockPanel.Dock="Top">
-            <TextBlock Text="Target Pi (host:port)"/>
-            <TextBox x:Name="TxtAgent" Text="localhost:8080" Margin="0,2,0,10"/>
+            <TextBlock Text="Target Pi"/>
+            <ComboBox x:Name="CmbAgent" IsEditable="True" DisplayMemberPath="Name"
+                      IsTextSearchEnabled="False" Text="localhost:8080" Margin="0,2,0,10"/>
 
             <TextBlock Text="Capture slot"/>
             <ComboBox x:Name="CmbSlot" SelectedIndex="0" Margin="0,2,0,10" SelectionChanged="Slot_Changed">

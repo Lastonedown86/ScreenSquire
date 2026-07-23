@@ -26,6 +26,7 @@ public partial class SignageWindow : Window
         Loaded += (_, _) =>
         {
             this.ExcludeFromCapture();   // our window never appears in the screenshot
+            CmbAgent.ItemsSource = new PiSignage.Signage.DeviceStore().Load();  // saved Pis to pick from
             HydrateFromDevice();         // restore what's already on the device
         };
         // WPF sometimes sends the owner behind other apps when an owned window
@@ -102,7 +103,12 @@ public partial class SignageWindow : Window
     }
 
     string Slot => ((ComboBoxItem)CmbSlot.SelectedItem).Content!.ToString()!;
-    string Base => "http://" + TxtAgent.Text.Trim();
+    // Target from the picked saved device (Ip:8080), else the typed host[:port].
+    string Base => CmbAgent.SelectedItem is PiSignage.Signage.SavedDevice d
+        ? "http://" + d.Ip + ":8080"
+        : "http://" + CmbAgent.Text.Trim();
+
+    string TargetLabel => CmbAgent.SelectedItem is PiSignage.Signage.SavedDevice d ? d.Name : CmbAgent.Text.Trim();
 
     async void Capture_Click(object s, RoutedEventArgs e)
     {
@@ -133,7 +139,7 @@ public partial class SignageWindow : Window
             var path = await _client.UploadMediaAsync(Base, name, png);
             _state.Boards[Slot] = path;
             await _client.PostDashboardAsync(Base, DashboardPayload.Build(_state, _timer));
-            Status.Text = $"Pushed {Slot} → {TxtAgent.Text}";
+            Status.Text = $"Pushed {Slot} → {TargetLabel}";
         }
         catch (Exception ex) { Status.Text = "Push failed: " + ex.Message; }
         finally { SetBusy(false); }
