@@ -89,6 +89,16 @@ The installer sets up: the agent as a systemd service (auto-restart), Chromium
 kiosk on boot (auto-relaunch if it crashes), screen blanking off, desktop
 autologin.
 
+## Pre-imaging a unit for USB WiFi setup (builder)
+
+After running `install.sh` on a fresh image, also run:
+
+    cd ~/pi-signage/pi-setup && bash provision-usb.sh && sudo reboot
+
+The unit now presents a USB network link at `10.55.0.1:8080` when plugged into a
+PC. The customer uses the app's **Add a Pi** wizard: plug in the Pi with a USB-C
+**data** cable, enter WiFi SSID + password, click **Connect to WiFi**.
+
 ## Notes & known limits (phase 1)
 
 - **URL items render in an iframe.** Sites that send `X-Frame-Options: DENY`
