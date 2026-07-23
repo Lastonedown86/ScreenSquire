@@ -35,17 +35,11 @@ public partial class SignageWindow : Window
 
     async Task CaptureAndPush((int x, int y, int w, int h) r)
     {
-        byte[] png;
         Hide();
         try
         {
-            await Task.Delay(200);   // let the desktop repaint with our window gone
-            png = ScreenCapture.CaptureRegion(r.x, r.y, r.w, r.h);
-        }
-        finally { Show(); }
-
-        try
-        {
+            await Task.Delay(200);   // let the desktop repaint with our window gone before grabbing
+            var png = ScreenCapture.CaptureRegion(r.x, r.y, r.w, r.h);
             var name = $"{Slot}-{++_counter}.png";                 // unique -> cache-bust
             var path = await _client.UploadMediaAsync(Base, name, png);
             _state.Boards[Slot] = path;
@@ -53,6 +47,7 @@ public partial class SignageWindow : Window
             Status.Text = $"Pushed {Slot} → {TxtAgent.Text}";
         }
         catch (Exception ex) { Status.Text = "Push failed: " + ex.Message; }
+        finally { Show(); }
     }
 
     async void StartTimer_Click(object s, RoutedEventArgs e)
