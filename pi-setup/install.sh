@@ -25,6 +25,9 @@ python3 -m venv "$AGENT_DIR/.venv"
 "$AGENT_DIR/.venv/bin/pip" install -r "$AGENT_DIR/requirements.txt"
 
 # ---------------------------------------------------------------- agent service
+USER_UID="$(id -u "$USER_NAME")"
+# XDG_RUNTIME_DIR + the session bus let the agent drive the user-session kiosk
+# service (systemctl --user) so the control app can stop/start the kiosk.
 sudo tee /etc/systemd/system/signage-agent.service >/dev/null <<EOF
 [Unit]
 Description=Pi Signage Agent
@@ -35,6 +38,8 @@ Wants=network-online.target
 User=$USER_NAME
 WorkingDirectory=$AGENT_DIR
 Environment=SIGNAGE_PORT=8080
+Environment=XDG_RUNTIME_DIR=/run/user/$USER_UID
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$USER_UID/bus
 ExecStart=$AGENT_DIR/.venv/bin/python main.py
 Restart=always
 RestartSec=3
@@ -64,21 +69,44 @@ done
 EOF
 chmod +x "$APP_DIR/kiosk.sh"
 
-# ---------------------------------------------------------------- autostart (covers labwc, wayfire, and X11 sessions)
+# ---- kiosk as a systemd USER service, so the app can stop/start it on demand ----
+# (stopping it drops the Pi to its desktop, controllable over VNC; starting it
+#  brings signage back)
+mkdir -p "$HOME_DIR/.config/systemd/user"
+cat > "$HOME_DIR/.config/systemd/user/pisignage-kiosk.service" <<EOF
+[Unit]
+Description=PiSignage Chromium kiosk
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Environment=WAYLAND_DISPLAY=wayland-0
+ExecStart=$APP_DIR/kiosk.sh
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target
+EOF
+# keep the user manager alive so the agent can reach it (systemctl --user)
+sudo loginctl enable-linger "$USER_NAME" || true
+
+# ---------------------------------------------------------------- autostart (labwc/wayfire)
+# Start the kiosk via its user service, importing the compositor env first so
+# Chromium finds the Wayland display.
 mkdir -p "$HOME_DIR/.config/labwc" "$HOME_DIR/.config/autostart"
+KIOSK_START='systemctl --user import-environment WAYLAND_DISPLAY XDG_RUNTIME_DIR XDG_CURRENT_DESKTOP; systemctl --user start pisignage-kiosk.service'
 
-grep -q kiosk.sh "$HOME_DIR/.config/labwc/autostart" 2>/dev/null || \
-  echo "$APP_DIR/kiosk.sh &" >> "$HOME_DIR/.config/labwc/autostart"
-
-if [ -f "$HOME_DIR/.config/wayfire.ini" ] && ! grep -q kiosk.sh "$HOME_DIR/.config/wayfire.ini"; then
-  printf "\n[autostart]\nkiosk = %s\n" "$APP_DIR/kiosk.sh" >> "$HOME_DIR/.config/wayfire.ini"
-fi
+# remove any old direct-launch line, then add the service-start line
+sed -i '/kiosk\.sh/d' "$HOME_DIR/.config/labwc/autostart" 2>/dev/null || true
+grep -q pisignage-kiosk "$HOME_DIR/.config/labwc/autostart" 2>/dev/null || \
+  echo "$KIOSK_START" >> "$HOME_DIR/.config/labwc/autostart"
 
 cat > "$HOME_DIR/.config/autostart/signage-kiosk.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Signage Kiosk
-Exec=$APP_DIR/kiosk.sh
+Exec=sh -c "$KIOSK_START"
 X-GNOME-Autostart-enabled=true
 EOF
 

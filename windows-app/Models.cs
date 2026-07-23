@@ -71,3 +71,15 @@ public class DiscoveredDevice
     public int Port { get; set; } = 8080;
     public override string ToString() => $"{Name} ({Address}:{Port})";
 }
+
+public class KioskState
+{
+    [JsonPropertyName("running")] public bool Running { get; set; }
+}
+
+public class KioskResult
+{
+    [JsonPropertyName("ok")] public bool Ok { get; set; }
+    [JsonPropertyName("running")] public bool? Running { get; set; }
+    [JsonPropertyName("error")] public string? Error { get; set; }
+}

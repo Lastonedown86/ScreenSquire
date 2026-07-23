@@ -175,6 +175,31 @@ public partial class MainWindow : Window
         ReloadDevices();   // show the newly-provisioned Pi
     }
 
+    // Stop the kiosk to reach the Pi's desktop (drive the OS over VNC), or restart it.
+    async void BtnKiosk_Click(object sender, RoutedEventArgs e)
+    {
+        if (_api == null)
+        {
+            MessageBox.Show(this, "Connect to a Pi first.", "Kiosk", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        try
+        {
+            var st = await _api.GetKioskAsync();
+            bool running = st?.Running ?? false;
+            bool ok = await _api.SetKioskAsync(!running);
+            if (!ok) { LblStatus.Text = "Kiosk toggle failed"; return; }
+            LblStatus.Text = running
+                ? "Kiosk stopped — the Pi's desktop is now controllable via Remote control"
+                : "Kiosk started — signage is back on";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, "Kiosk toggle failed: " + ex.Message, "Kiosk",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
     // Open a VNC session to the selected Pi so staff can drive the TV with kb/mouse.
     void BtnRemote_Click(object sender, RoutedEventArgs e)
     {

@@ -77,6 +77,16 @@ public class ApiClient : IDisposable
         await ThrowIfError(resp);
     }
 
+    public Task<KioskState?> GetKioskAsync() => _http.GetFromJsonAsync<KioskState>("/api/kiosk");
+
+    public async Task<bool> SetKioskAsync(bool running)
+    {
+        var resp = await _http.PostAsJsonAsync("/api/kiosk", new { running });
+        await ThrowIfError(resp);
+        var r = await resp.Content.ReadFromJsonAsync<KioskResult>();
+        return r?.Ok ?? false;
+    }
+
     private static async Task ThrowIfError(HttpResponseMessage resp)
     {
         if (resp.IsSuccessStatusCode) return;

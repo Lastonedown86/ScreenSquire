@@ -389,6 +389,34 @@ async def wifi_status():
     return {"connected": ip is not None, "ssid": ssid, "ip": ip}
 
 
+# ---- kiosk control (drive the OS: stop the kiosk to reach the desktop over VNC) ----
+KIOSK_UNIT = "pisignage-kiosk.service"
+
+
+class KioskRequest(BaseModel):
+    running: bool
+
+
+async def _systemctl_user(*args: str, timeout: float = 15.0) -> tuple[int, str, str]:
+    # agent runs as the desktop user with XDG_RUNTIME_DIR set (see the service unit),
+    # so it can drive the user-session kiosk service.
+    return await _run(["systemctl", "--user", *args], timeout=timeout)
+
+
+@app.get("/api/kiosk")
+async def kiosk_status():
+    _, out, _ = await _systemctl_user("is-active", KIOSK_UNIT, timeout=8.0)
+    return {"running": out.strip() == "active"}
+
+
+@app.post("/api/kiosk")
+async def set_kiosk(req: KioskRequest):
+    rc, out, err = await _systemctl_user("start" if req.running else "stop", KIOSK_UNIT)
+    if rc != 0:
+        return {"ok": False, "running": None, "error": (err.strip() or out.strip() or "systemctl failed")}
+    return {"ok": True, "running": req.running, "error": None}
+
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await hub.register(ws)
