@@ -1,0 +1,147 @@
+<Window x:Class="PiSignage.Control.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Pi Signage Control" Height="640" Width="960"
+        MinHeight="520" MinWidth="820"
+        Background="{StaticResource Bg}">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- ============ connect bar ============ -->
+        <Border Grid.Row="0" Background="{StaticResource CardBg}" Padding="10,8" BorderBrush="#E5E7EB" BorderThickness="0,0,0,1">
+            <DockPanel>
+                <TextBlock Text="Device:" VerticalAlignment="Center" Margin="0,0,6,0" FontWeight="SemiBold"/>
+                <Button x:Name="BtnScan" Content="Scan network" DockPanel.Dock="Right" Click="BtnScan_Click"/>
+                <Button x:Name="BtnConnect" Content="Connect" DockPanel.Dock="Right"
+                        Style="{StaticResource PrimaryButton}" Click="BtnConnect_Click"/>
+                <ComboBox x:Name="CmbAddress" IsEditable="True" MinWidth="260" Margin="0,0,8,0"
+                          VerticalContentAlignment="Center"
+                          Text="raspberrypi.local"/>
+            </DockPanel>
+        </Border>
+
+        <!-- ============ main area ============ -->
+        <Grid Grid.Row="1" x:Name="MainArea" IsEnabled="False">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1*"/>
+                <ColumnDefinition Width="1.3*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- ==== media library ==== -->
+            <GroupBox Grid.Column="0" Header="Media on this Pi">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <ListBox x:Name="LstMedia" Grid.Row="0" SelectionMode="Single">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <DockPanel Margin="2">
+                                    <TextBlock Text="{Binding SizeText}" DockPanel.Dock="Right"
+                                               Foreground="{StaticResource TextMuted}" Margin="8,0,0,0"/>
+                                    <TextBlock Text="{Binding Type}" DockPanel.Dock="Right"
+                                               Foreground="{StaticResource TextMuted}" Margin="8,0,0,0"/>
+                                    <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/>
+                                </DockPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <WrapPanel Grid.Row="1" Margin="0,6,0,0">
+                        <Button x:Name="BtnUpload" Content="Upload files…" Click="BtnUpload_Click"/>
+                        <Button x:Name="BtnAddToPlaylist" Content="Add to playlist →" Click="BtnAddToPlaylist_Click"/>
+                        <Button x:Name="BtnDeleteMedia" Content="Delete" Click="BtnDeleteMedia_Click"/>
+                    </WrapPanel>
+                </Grid>
+            </GroupBox>
+
+            <!-- ==== playlist + show now ==== -->
+            <Grid Grid.Column="1">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <GroupBox Grid.Row="0" Header="Playlist (loops on the TV)">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <ListBox x:Name="LstPlaylist" Grid.Row="0" HorizontalContentAlignment="Stretch">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="2">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" Orientation="Vertical">
+                                            <TextBlock Text="{Binding Display}" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Text="{Binding Type}" FontSize="11"
+                                                       Foreground="{StaticResource TextMuted}"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="6,0">
+                                            <TextBox Text="{Binding Duration, UpdateSourceTrigger=PropertyChanged}"
+                                                     Width="44" TextAlignment="Right"/>
+                                            <TextBlock Text="s" VerticalAlignment="Center" Margin="2,0,0,0"
+                                                       Foreground="{StaticResource TextMuted}"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Button Content="▲" Style="{StaticResource SmallButton}" Click="BtnMoveUp_Click"/>
+                                            <Button Content="▼" Style="{StaticResource SmallButton}" Click="BtnMoveDown_Click"/>
+                                        </StackPanel>
+                                        <Button Grid.Column="3" Content="✕" Style="{StaticResource SmallButton}"
+                                                Click="BtnRemoveItem_Click" Margin="4,0,0,0"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <DockPanel Grid.Row="1" Margin="0,6,0,0">
+                            <TextBlock Text="Add web page:" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                            <Button x:Name="BtnAddUrl" Content="Add" DockPanel.Dock="Right" Click="BtnAddUrl_Click"/>
+                            <TextBox x:Name="TxtUrl" Text="https://"/>
+                        </DockPanel>
+
+                        <WrapPanel Grid.Row="2" Margin="0,6,0,0">
+                            <Button x:Name="BtnSavePlaylist" Content="Save to Pi"
+                                    Style="{StaticResource PrimaryButton}" Click="BtnSavePlaylist_Click"/>
+                            <Button x:Name="BtnRevert" Content="Revert" Click="BtnRevert_Click"/>
+                            <Button x:Name="BtnSkip" Content="Skip ▶" Click="BtnSkip_Click"/>
+                            <TextBlock x:Name="LblDirty" Text="Unsaved changes" Foreground="#B45309"
+                                       VerticalAlignment="Center" Margin="10,0,0,0" Visibility="Collapsed"/>
+                        </WrapPanel>
+                    </Grid>
+                </GroupBox>
+
+                <GroupBox Grid.Row="1" Header="Show now (interrupts the playlist)">
+                    <WrapPanel>
+                        <Button x:Name="BtnShowSelected" Content="Show selected media" Click="BtnShowSelected_Click"/>
+                        <Button x:Name="BtnShowUrl" Content="Show URL above" Click="BtnShowUrl_Click"/>
+                        <TextBlock Text="for" VerticalAlignment="Center" Margin="8,0,4,0"/>
+                        <TextBox x:Name="TxtShowSecs" Text="60" Width="44" TextAlignment="Right"/>
+                        <TextBlock Text="seconds" VerticalAlignment="Center" Margin="4,0,8,0"/>
+                        <Button x:Name="BtnClearShow" Content="Back to playlist" Click="BtnClearShow_Click"/>
+                    </WrapPanel>
+                </GroupBox>
+            </Grid>
+        </Grid>
+
+        <!-- ============ status strip ============ -->
+        <Border Grid.Row="2" Background="#1F2937" Padding="10,6">
+            <DockPanel>
+                <TextBlock x:Name="LblNow" DockPanel.Dock="Right" Foreground="#D1D5DB"/>
+                <TextBlock x:Name="LblStatus" Foreground="White" Text="Not connected"/>
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>

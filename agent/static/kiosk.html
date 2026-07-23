@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Signage</title>
+<style>
+  /* A signage screen has one job: show the content, edge to edge, on pure
+     black. Everything else stays invisible unless something is wrong. */
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; cursor: none; }
+  .layer {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    opacity: 0; transition: opacity .5s ease;
+  }
+  .layer.visible { opacity: 1; }
+  .layer img, .layer video { width: 100%; height: 100%; object-fit: contain; }
+  .layer iframe { width: 100%; height: 100%; border: 0; }
+
+  /* idle card — shown only when there is no playlist yet */
+  #idle { color: #3a3a3a; font: 500 3.5vmin/1.5 system-ui, sans-serif;
+          flex-direction: column; text-align: center; letter-spacing: .04em; }
+  #idle .dot { width: 1.2vmin; height: 1.2vmin; border-radius: 50%; background: #2e7d32;
+               margin-bottom: 2vmin; animation: pulse 2.4s infinite; }
+  @keyframes pulse { 50% { opacity: .3; } }
+
+  /* tiny corner badge if the agent connection drops — visible from the couch,
+     ignorable from across the room */
+  #offline { position: fixed; right: 16px; bottom: 16px; padding: 6px 12px;
+             background: #b71c1c; color: #fff; font: 600 12px system-ui;
+             border-radius: 4px; display: none; }
+</style>
+</head>
+<body>
+  <div class="layer" id="idle"><div class="dot"></div><div id="idleText">Ready — waiting for content</div></div>
+  <div class="layer" id="a"></div>
+  <div class="layer" id="b"></div>
+  <div id="offline">Reconnecting…</div>
+
+<script>
+(() => {
+  const layers = [document.getElementById('a'), document.getElementById('b')];
+  const idle = document.getElementById('idle');
+  const offline = document.getElementById('offline');
+  let front = 0;            // which layer is currently visible
+  let currentId = null;     // avoid reloading the same item on reconnect
+  let ws = null;
+
+  function show(msg) {
+    if (msg.type === 'idle') {
+      if (msg.name) document.getElementById('idleText').textContent =
+        msg.name + ' — ready, waiting for content';
+      layers.forEach(l => { l.classList.remove('visible'); l.innerHTML = ''; });
+      idle.classList.add('visible');
+      currentId = null;
+      return;
+    }
+    if (msg.id && msg.id === currentId) return;   // already showing it
+    currentId = msg.id || null;
+    idle.classList.remove('visible');
+
+    const back = layers[1 - front];
+    back.innerHTML = '';
+    let el;
+    if (msg.type === 'image') {
+      el = new Image();
+      el.src = msg.src;
+      el.onload = () => swap(back);
+      el.onerror = () => swap(back);              // still swap; black beats stuck
+    } else if (msg.type === 'video') {
+      el = document.createElement('video');
+      el.src = msg.src;
+      el.muted = true;                            // required for autoplay
+      el.autoplay = true; el.loop = true; el.playsInline = true;
+      el.oncanplay = () => swap(back);
+      el.onerror = () => swap(back);
+    } else if (msg.type === 'url') {
+      el = document.createElement('iframe');
+      el.src = msg.src;
+      el.sandbox = 'allow-scripts allow-same-origin allow-forms';
+      // iframes fire load even on some failures; swap after a short grace period
+      el.onload = () => swap(back);
+      setTimeout(() => swap(back), 4000);
+    } else { return; }
+    back.appendChild(el);
+  }
+
+  let swapped = false;
+  function swap(back) {
+    if (back.classList.contains('visible')) return;
+    const old = layers[front];
+    back.classList.add('visible');
+    old.classList.remove('visible');
+    front = 1 - front;
+    // free the old media after the fade so videos stop downloading/decoding
+    setTimeout(() => { if (!old.classList.contains('visible')) old.innerHTML = ''; }, 600);
+  }
+
+  function connect() {
+    ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+    ws.onopen = () => { offline.style.display = 'none'; };
+    ws.onmessage = (e) => { try { show(JSON.parse(e.data)); } catch {} };
+    ws.onclose = () => {
+      offline.style.display = 'block';
+      setTimeout(connect, 2000);                  // retry forever
+    };
+    ws.onerror = () => ws.close();
+  }
+  connect();
+
+  // keepalive ping so half-dead connections get noticed
+  setInterval(() => { if (ws && ws.readyState === 1) ws.send('ping'); }, 20000);
+
+  // if the page has been up for a very long time, a nightly reload keeps
+  // Chromium's memory in check (03:30 local)
+  setInterval(() => {
+    const d = new Date();
+    if (d.getHours() === 3 && d.getMinutes() === 30) location.reload();
+  }, 60000);
+})();
+</script>
+</body>
+</html>
