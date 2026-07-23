@@ -23,3 +23,9 @@ def test_boards_roundtrip():
 
 def test_dashboard_page_served():
     assert client.get("/dashboard").status_code == 200
+
+def test_dashboard_page_has_views_and_poll():
+    html = client.get("/dashboard").text
+    assert "view-board" in html and "view-timer" in html
+    assert "/api/dashboard" in html            # it polls
+    assert "No pairings posted" in html or "Nothing posted" in html  # idle state
