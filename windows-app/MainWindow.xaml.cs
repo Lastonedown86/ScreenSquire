@@ -250,11 +250,11 @@ public partial class MainWindow : Window
         if (viewer == null)
         {
             if (MessageBox.Show(this,
-                    "No VNC viewer is installed. Install RealVNC Viewer now? (a winget window will open)",
+                    "No VNC viewer is installed. Install TightVNC Viewer now? (a winget window will open)",
                     "Remote control", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
             {
                 try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
-                    "winget", "install --id RealVNC.VNCViewer -e") { UseShellExecute = true }); }
+                    "winget", $"install --id {PiSignage.Signage.VncLauncher.ViewerWingetId} -e --accept-source-agreements --accept-package-agreements") { UseShellExecute = true }); }
                 catch (System.Exception ex) { MessageBox.Show(this, "Couldn't launch winget: " + ex.Message); }
             }
             return;
