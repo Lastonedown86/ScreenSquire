@@ -252,6 +252,7 @@ public partial class SignageWindow : Window
     // One click = whole round turnover: round+1, capture pairings, push, start clock.
     async void NextRound_Click(object s, RoutedEventArgs e)
     {
+        string prevRoundText = TxtRound.Text;
         int round = (int.TryParse(TxtRound.Text, out var r) ? r : 0) + 1;
         int min = int.TryParse(TxtMinutes.Text, out var m) ? m : 25;
         TxtRound.Text = round.ToString();
@@ -264,18 +265,19 @@ public partial class SignageWindow : Window
                 Owner = this,
                 Instruction = "First time: drag a box around the pairings — Esc to cancel",
             };
-            if (sel.ShowDialog() != true || sel.Result is null) return;
+            if (sel.ShowDialog() != true || sel.Result is null) { TxtRound.Text = prevRoundText; return; }
             _lastRegion = sel.Result;
-            BtnRecapture.IsEnabled = true;
+            UpdateActionButtons();   // single gate: recomputes BtnRecapture from Targets.Any() && _lastRegion
         }
 
         BtnNextRound.IsEnabled = false;
         try
         {
-            await CaptureAndPush(_lastRegion.Value);
+            var pushResult = await CaptureAndPush(_lastRegion.Value);
+            if (pushResult is null || pushResult.AllFailed) return;   // CaptureAndPush already toasted the failure
             if (await StartRound(min, round))
             {
-                int n = Targets.Count();
+                int n = pushResult.Succeeded.Count;
                 Toaster.Show($"Round {round} started — pairings sent to {n} TV{(n == 1 ? "" : "s")}, {min}:00 on the clock.",
                              ToastKind.Success);
             }
@@ -303,9 +305,9 @@ public partial class SignageWindow : Window
     }
 
     // One capture -> every checked TV. Upload the PNG then post the dashboard per TV.
-    async Task CaptureAndPush((int x, int y, int w, int h) r)
+    async Task<MultiPushResult?> CaptureAndPush((int x, int y, int w, int h) r)
     {
-        if (!Targets.Any()) { Status.Text = "Tick at least one TV above."; return; }
+        if (!Targets.Any()) { Status.Text = "Tick at least one TV above."; return null; }
         SetBusy(true);
         try
         {
@@ -326,6 +328,7 @@ public partial class SignageWindow : Window
                 App.Settings.Regions[Slot] = new PiSignage.Signage.RegionRect { X = r.x, Y = r.y, W = r.w, H = r.h };
                 App.SaveSettings();
             }
+            return result;
         }
         finally { SetBusy(false); }
     }
