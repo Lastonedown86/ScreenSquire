@@ -104,7 +104,7 @@ Use `deploy-agent.ps1` (from your Windows PC) to push updates over HTTP to `/api
 .\deploy-agent.ps1 -Hosts 192.168.0.58, pisignage2.local
 ```
 
-This updates the agent without SSH. Omit `-Hosts` to update every saved Pi; specify addresses to update only those. **Note:** Changes to `venv/requirements.txt`
+This updates the agent without SSH. Omit `-Hosts` to update every saved Pi; specify addresses to update only those (add `-Port` if an agent isn't on the default 8080). **Note:** Changes to `venv/requirements.txt`
 and pre-`/api/update` agents still require manual SSH deployment.
 
 ## Pre-imaging a unit for USB WiFi setup (builder)
