@@ -465,13 +465,13 @@ async def update_agent(file: UploadFile):
     total = 0
     for info in zf.infolist():
         name = info.filename
+        parts = PurePosixPath(name).parts
+        if name.startswith("/") or ".." in parts or ":" in name or "\\" in name:
+            raise HTTPException(400, f"Unsafe path in update: {name}")
         if name.endswith("/"):
             if name != "static/" and not name.startswith("static/"):
                 raise HTTPException(400, f"Unexpected folder in update: {name}")
             continue
-        parts = PurePosixPath(name).parts
-        if name.startswith("/") or ".." in parts or ":" in name or "\\" in name:
-            raise HTTPException(400, f"Unsafe path in update: {name}")
         if name != "main.py" and not name.startswith("static/"):
             raise HTTPException(400, f"Unexpected file in update: {name}")
         total += info.file_size

@@ -54,6 +54,17 @@ def test_update_rejects_traversal_and_stray_files(tmp_path, monkeypatch):
     assert (tmp_path / "main.py").read_text() == "OLD = 1\n"  # untouched
 
 
+def test_update_rejects_traversal_directory_entry(tmp_path, monkeypatch):
+    _fake_app_dir(tmp_path, monkeypatch)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("main.py", GOOD_MAIN)
+        zf.writestr(zipfile.ZipInfo("static/../../evil/"), "")  # pure directory entry
+    r = _post(buf.getvalue())
+    assert r.status_code == 400
+    assert (tmp_path / "main.py").read_text() == "OLD = 1\n"  # untouched
+
+
 def test_update_requires_main_py(tmp_path, monkeypatch):
     _fake_app_dir(tmp_path, monkeypatch)
     assert _post(_zip_bytes({"static/kiosk.html": "<new>"})).status_code == 400
