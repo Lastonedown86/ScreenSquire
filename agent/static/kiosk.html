@@ -75,7 +75,9 @@
     } else if (msg.type === 'url') {
       el = document.createElement('iframe');
       el.src = msg.src;
-      el.sandbox = 'allow-scripts allow-same-origin allow-forms';
+      el.sandbox = 'allow-scripts allow-same-origin allow-forms allow-presentation';
+      // let embeds autoplay video + play DRM audio (YouTube, Spotify, etc.)
+      el.allow = 'autoplay; encrypted-media; fullscreen; picture-in-picture';
       // iframes fire load even on some failures; swap after a short grace period
       el.onload = () => swap(back);
       setTimeout(() => swap(back), 4000);
