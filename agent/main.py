@@ -449,9 +449,11 @@ _VERSION_RE = re.compile(r'AGENT_VERSION\s*=\s*"([^"]+)"')
 
 async def _restart_after_update() -> None:
     # let the HTTP response flush before we pull the rug out
-    await asyncio.sleep(1.0)
-    await _systemctl_user("restart", KIOSK_UNIT)  # TV picks up new static pages
-    os._exit(0)  # systemd Restart=always relaunches us with the new code
+    try:
+        await asyncio.sleep(1.0)
+        await _systemctl_user("restart", KIOSK_UNIT)  # TV picks up new static pages
+    finally:
+        os._exit(0)  # systemd Restart=always relaunches us with the new code
 
 
 @app.post("/api/update")
@@ -499,13 +501,13 @@ async def update_agent(file: UploadFile):
         if (APP_DIR / "static").exists():
             shutil.copytree(APP_DIR / "static", backup / "static")
 
-        shutil.copy2(tmp / "main.py", APP_DIR / "main.py")
+        os.replace(tmp / "main.py", APP_DIR / "main.py")  # atomic — tmp is on APP_DIR's filesystem
         if (tmp / "static").exists():
             shutil.copytree(tmp / "static", APP_DIR / "static", dirs_exist_ok=True)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-    asyncio.create_task(_restart_after_update())
+    _restart_task = asyncio.create_task(_restart_after_update())
     log.info("Agent updated to %s — restarting", new_version)
     return {"ok": True, "version": new_version}
 

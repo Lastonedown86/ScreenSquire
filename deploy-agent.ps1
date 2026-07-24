@@ -1,3 +1,4 @@
+#Requires -Version 7
 # Push the agent (main.py + static pages) to Pis over HTTP — no SSH, no password.
 #   .\deploy-agent.ps1                 # deploys to every Pi saved in the control app
 #   .\deploy-agent.ps1 -Hosts 192.168.0.58, pisignage2.local
