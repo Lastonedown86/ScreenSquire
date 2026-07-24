@@ -63,11 +63,15 @@
             </StackPanel>
 
             <TextBlock Text="3. Capture from your screen" FontWeight="SemiBold" Margin="0,12,0,0"/>
-            <ComboBox x:Name="CmbSlot" SelectedIndex="0" Margin="0,2,0,10" SelectionChanged="Slot_Changed"
-                      ToolTip="Which board on the TV this capture fills — pairings or standings">
-                <ComboBoxItem>pairings</ComboBoxItem>
-                <ComboBoxItem>standings</ComboBoxItem>
-            </ComboBox>
+            <StackPanel Orientation="Horizontal" Margin="0,2,0,10">
+                <ComboBox x:Name="CmbSlot" MinWidth="170" SelectionChanged="Slot_Changed"
+                          ToolTip="Which board on the TV this capture fills"/>
+                <Button Content="+ Add _board…" Click="AddBoard_Click" Margin="6,0,0,0"
+                        ToolTip="Add another board to capture into — like 'Top 8 bracket'"/>
+                <Button x:Name="BtnRemoveBoard" Content="Remove board" Click="RemoveBoard_Click" Margin="6,0,0,0"
+                        ToolTip="Take this board off the list (pairings and standings always stay)"
+                        ToolTipService.ShowOnDisabled="True"/>
+            </StackPanel>
 
             <StackPanel Orientation="Horizontal">
                 <Button x:Name="BtnCapture" Content="_Capture region…" Click="Capture_Click" Padding="10,4"

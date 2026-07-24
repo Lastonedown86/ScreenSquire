@@ -86,6 +86,7 @@ public partial class SignageWindow : Window
             b.Click += (_, e) => { TxtMinutes.Text = min.ToString(); StartTimer_Click(b, e); };
             Presets.Children.Add(b);
         }
+        LoadBoards();
         RestoreRegionForSlot();
     }
 
@@ -166,6 +167,7 @@ public partial class SignageWindow : Window
     async void Slot_Changed(object s, SelectionChangedEventArgs e)
     {
         if (!IsLoaded) return;
+        BtnRemoveBoard.IsEnabled = SlotDisplay is not ("pairings" or "standings");
         RestoreRegionForSlot();   // each slot remembers its own capture region
         await PreviewSlot();      // show the newly-selected slot's board
     }
@@ -226,7 +228,43 @@ public partial class SignageWindow : Window
         }
     }
 
-    string Slot => ((ComboBoxItem)CmbSlot.SelectedItem).Content!.ToString()!;
+    string SlotDisplay => CmbSlot.SelectedItem as string ?? "pairings";
+    string Slot => PiSignage.Signage.BoardSlug.From(SlotDisplay);
+
+    void LoadBoards(string? select = null)
+    {
+        CmbSlot.ItemsSource = null;
+        CmbSlot.ItemsSource = App.Settings.Boards;
+        CmbSlot.SelectedItem = select is not null && App.Settings.Boards.Contains(select)
+            ? select : App.Settings.Boards[0];
+        BtnRemoveBoard.IsEnabled = SlotDisplay is not ("pairings" or "standings");
+    }
+
+    void AddBoard_Click(object s, RoutedEventArgs e)
+    {
+        var name = TextPrompt.Ask(this, "What's on this board? For example: Top 8 bracket", "", "Add board");
+        if (name is null) return;
+        if (PiSignage.Signage.BoardSlug.From(name).Length == 0)
+        { Toaster.Show("That name needs at least one letter or number.", ToastKind.Error); return; }
+        var existing = App.Settings.Boards.FirstOrDefault(b =>
+            PiSignage.Signage.BoardSlug.From(b) == PiSignage.Signage.BoardSlug.From(name));
+        if (existing is not null) { LoadBoards(existing); return; }   // already there — just select it
+        App.Settings.Boards.Add(name);
+        App.SaveSettings();
+        LoadBoards(name);
+        Toaster.Show($"Board '{name}' added — capture into it like any other board.", ToastKind.Success);
+    }
+
+    void RemoveBoard_Click(object s, RoutedEventArgs e)
+    {
+        var name = SlotDisplay;
+        if (name is "pairings" or "standings") return;
+        App.Settings.Boards.Remove(name);
+        App.Settings.Regions.Remove(Slot);
+        App.SaveSettings();
+        LoadBoards();
+        Toaster.Show($"Board '{name}' removed from the list.", ToastKind.Success);
+    }
 
     void Tv_CheckChanged(object s, RoutedEventArgs e) => UpdateActionButtons();
 
@@ -290,7 +328,7 @@ public partial class SignageWindow : Window
         var sel = new RegionSelectorWindow
         {
             Owner = this,
-            Instruction = $"Drag a box around the {Slot} — Esc to cancel",
+            Instruction = $"Drag a box around the {SlotDisplay} — Esc to cancel",
         };
         var ok = sel.ShowDialog();
         if (ok != true || sel.Result is null) return;
