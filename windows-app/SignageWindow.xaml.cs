@@ -133,7 +133,8 @@ public partial class SignageWindow : Window
             else if (snap.timer.state == "paused" && snap.timer.remaining is { } prem)
             {
                 _pausedRemaining = prem;
-                _timer.Pause(prem);
+                _timer.RestoreRunning(prem, snap.timer.round, snap.timer.label);  // carries round+label
+                _timer.Pause(prem);                                                // then freeze it
                 if (snap.timer.round is { } prd) { TxtRound.Text = prd.ToString(); }
                 _endsAtLocal = null;
                 BtnPause.Content = "_Resume";
