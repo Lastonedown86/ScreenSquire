@@ -39,10 +39,19 @@ public class AgentUpdaterTests
     {
         public List<string> Requests = new();
         public Func<HttpRequestMessage, HttpResponseMessage> Respond = _ => new(HttpStatusCode.OK);
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
+        public System.Net.Http.Headers.ContentDispositionHeaderValue? CapturedContentDisposition;
+        public byte[]? CapturedFileBytes;
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
         {
             Requests.Add($"{req.Method} {req.RequestUri!.PathAndQuery}");
-            return Task.FromResult(Respond(req));
+            // read the multipart content now, before responding — the caller disposes it later
+            if (req.Content is MultipartFormDataContent multipart)
+            {
+                var part = multipart.First();
+                CapturedContentDisposition = part.Headers.ContentDisposition;
+                CapturedFileBytes = await part.ReadAsByteArrayAsync(ct);
+            }
+            return Respond(req);
         }
     }
 
@@ -61,10 +70,13 @@ public class AgentUpdaterTests
                     ? Json("{\"agent_version\": \"1\"}")     // still old / restarting
                     : Json("{\"agent_version\": \"2\"}"));
         using var http = new HttpClient(handler);
-        await AgentUpdater.PushAsync(http, "http://pi:8080", new byte[] { 1 }, "2",
+        var zipBytes = new byte[] { 1, 2, 3 };
+        await AgentUpdater.PushAsync(http, "http://pi:8080", zipBytes, "2",
             timeout: TimeSpan.FromSeconds(30), pollDelay: TimeSpan.Zero);
         Assert.Equal("POST /api/update", handler.Requests[0]);
         Assert.True(statusCalls >= 3);
+        Assert.Equal("file", handler.CapturedContentDisposition?.Name?.Trim('"'));
+        Assert.Equal(zipBytes, handler.CapturedFileBytes);
     }
 
     [Fact]

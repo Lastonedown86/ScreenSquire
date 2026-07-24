@@ -32,7 +32,7 @@ public static class AgentUpdater
         CancellationToken ct = default)
     {
         using var form = new MultipartFormDataContent { { new ByteArrayContent(zip), "file", "agent-update.zip" } };
-        var resp = await http.PostAsync($"{baseUrl}/api/update", form, ct);
+        using var resp = await http.PostAsync($"{baseUrl}/api/update", form, ct);
         resp.EnsureSuccessStatusCode();
 
         // the agent restarts itself now; poll until it's back on the new version
