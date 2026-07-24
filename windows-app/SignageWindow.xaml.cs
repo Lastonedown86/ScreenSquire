@@ -346,13 +346,14 @@ public partial class SignageWindow : Window
     async Task<MultiPushResult?> CaptureAndPush((int x, int y, int w, int h) r)
     {
         if (!Targets.Any()) { Status.Text = "Tick at least one TV above."; return null; }
+        var display = SlotDisplay;   // capture before the async work — client-facing text uses this, not the slug
         SetBusy(true);
         try
         {
             var png = ScreenCapture.CaptureRegion(r.x, r.y, r.w, r.h);
             ShowPreview(png);
             var name = $"{Slot}-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}.png";
-            Status.Text = $"Sending {Slot} to your TVs…";
+            Status.Text = $"Sending {display} to your TVs…";
             var result = await MultiPush.RunAsync(Targets, async t =>
             {
                 var path = await _client.UploadMediaAsync(t.BaseUrl, name, png);
@@ -503,6 +504,7 @@ public partial class SignageWindow : Window
     async void PinBoardToTv_Click(object s, RoutedEventArgs e)
     {
         var slot = Slot;
+        var display = SlotDisplay;   // client-facing text uses this, not the slug
         var result = await MultiPush.RunAsync(Targets, async t =>
         {
             var u = new Uri(t.BaseUrl);
@@ -511,7 +513,7 @@ public partial class SignageWindow : Window
         });
         Toaster.Show(result.AllFailed
             ? "Couldn't pin it on any TV: " + result.Summary(verb: "pinned")
-            : $"The {slot} are pinned — {result.Summary(verb: "pinned")} Click 'Back to playlist' when the event is over.",
+            : $"The {display} are pinned — {result.Summary(verb: "pinned")} Click 'Back to playlist' when the event is over.",
             result.AllFailed ? ToastKind.Error : ToastKind.Success);
     }
 
