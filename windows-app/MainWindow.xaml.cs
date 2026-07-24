@@ -262,7 +262,7 @@ public partial class MainWindow : Window
         try
         {
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
-                viewer, PiSignage.Signage.VncLauncher.Target(_connectedHost)) { UseShellExecute = false });
+                viewer, PiSignage.Signage.VncLauncher.BuildLaunchArgs(viewer, _connectedHost)) { UseShellExecute = false });
             LblStatus.Text = $"Opening remote control ({_connectedHost}:{PiSignage.Signage.VncLauncher.Port})…";
         }
         catch (System.Exception ex) { MessageBox.Show(this, "Couldn't open the viewer: " + ex.Message); }

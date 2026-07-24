@@ -33,4 +33,16 @@ public static class VncLauncher
     // Viewer target argument: "<ip>::<port>" (the double colon forces a raw port,
     // understood by RealVNC and TigerVNC alike).
     public static string Target(string ip, int port = Port) => $"{ip}::{port}";
+
+    // Full command-line args for a viewer. For TigerVNC, open WINDOWED + locally
+    // scaled (never resize the TV's own resolution) so it's easy to shrink.
+    public static string BuildLaunchArgs(string viewerPath, string ip, int port = Port)
+    {
+        var target = Target(ip, port);
+        if (viewerPath.Contains("TigerVNC", StringComparison.OrdinalIgnoreCase)
+            || viewerPath.EndsWith("vncviewer.exe", StringComparison.OrdinalIgnoreCase)
+               && !viewerPath.Contains("RealVNC", StringComparison.OrdinalIgnoreCase))
+            return $"{target} -FullScreen=0 -RemoteResize=0 -Scaling=Auto";
+        return target;
+    }
 }

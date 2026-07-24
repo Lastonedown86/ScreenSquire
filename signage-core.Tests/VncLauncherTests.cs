@@ -28,4 +28,19 @@ public class VncLauncherTests
     {
         Assert.Null(VncLauncher.FindViewer(new[] { @"C:\nope1\vncviewer.exe", @"C:\nope2\vncviewer.exe" }));
     }
+
+    [Fact]
+    public void TigerVncLaunchesWindowed()
+    {
+        var args = VncLauncher.BuildLaunchArgs(@"C:\Program Files\TigerVNC\vncviewer.exe", "192.168.0.58");
+        Assert.Contains("192.168.0.58::5900", args);
+        Assert.Contains("-FullScreen=0", args);
+    }
+
+    [Fact]
+    public void NonTigerViewerGetsPlainTarget()
+    {
+        var args = VncLauncher.BuildLaunchArgs(@"C:\Program Files\RealVNC\VNC Viewer\vncviewer.exe", "10.0.0.5");
+        Assert.Equal("10.0.0.5::5900", args);
+    }
 }
