@@ -74,3 +74,7 @@ def test_partial_board_push_merges():
     boards = client.get("/api/dashboard").json()["view_data"]["boards"]
     assert boards["standings"] == "/media/s-1.png"
     assert boards["pairings"] == "/media/p-9.png"
+
+def test_dashboard_page_pulses_time_up():
+    html = client.get("/dashboard").text
+    assert "timepulse" in html   # TIME pulses so it reads across the room

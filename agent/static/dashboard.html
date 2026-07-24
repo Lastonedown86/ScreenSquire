@@ -23,6 +23,9 @@
     padding:1vmin 2.2vmin; font-variant-numeric:tabular-nums; font-size:6vmin; }
   #board-timer .lbl { color:#8b93a7; font-size:2.6vmin; margin-right:1.5vmin; }
   #board-timer.over { color:#ff5d5d; }
+  /* time's up: slow pulse so it's obvious across the room; opacity only (Pi-cheap) */
+  @keyframes timepulse { 0%,100% { opacity:1 } 50% { opacity:.35 } }
+  .clock .time.over, #board-timer.over { animation: timepulse 1.6s ease-in-out infinite; }
   .hidden { display:none !important; }
 </style>
 </head>
