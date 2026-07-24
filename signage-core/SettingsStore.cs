@@ -26,6 +26,11 @@ public sealed class AppSettings
     public Dictionary<string, RegionRect> Regions { get; set; } = new();
     public int TimerMinutes { get; set; } = 25;
     public List<int> TimerPresets { get; set; } = new() { 30, 45, 50 };
+    // Checked TVs in the Tournament Signage window (hostnames). Replaces the
+    // single SignageTarget, which is kept for migration of old settings files.
+    public List<string> SignageTargets { get; set; } = new();
+    // Capture boards shown in the board picker (display names as the client typed them).
+    public List<string> Boards { get; set; } = new() { "pairings", "standings" };
 }
 
 // Same shape as DeviceStore: JSON in %AppData%\PiSignage, corrupt -> defaults,
@@ -50,7 +55,14 @@ public sealed class SettingsStore
         try
         {
             if (!File.Exists(_path)) return new();
-            return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(_path)) ?? new();
+            var s = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(_path)) ?? new();
+            // migrate: old files had one target; carry it into the checked-TVs list
+            if (s.SignageTargets.Count == 0 && !string.IsNullOrWhiteSpace(s.SignageTarget))
+                s.SignageTargets.Add(s.SignageTarget!);
+            // the two default boards are permanent
+            if (!s.Boards.Contains("standings")) s.Boards.Insert(0, "standings");
+            if (!s.Boards.Contains("pairings")) s.Boards.Insert(0, "pairings");
+            return s;
         }
         catch { return new(); }   // corrupt/unreadable -> defaults, never crash
     }

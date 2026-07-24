@@ -45,4 +45,51 @@ public class SettingsStoreTests
         }
         finally { System.IO.File.Delete(path); }
     }
+
+    [Fact]
+    public void LegacySingleTargetMigratesIntoTargetsList()
+    {
+        var path = TempFile();
+        try
+        {
+            System.IO.File.WriteAllText(path, """{"SignageTarget":"pi-front.local"}""");
+            var s = new SettingsStore(path).Load();
+            Assert.Equal(new[] { "pi-front.local" }, s.SignageTargets);
+        }
+        finally { System.IO.File.Delete(path); }
+    }
+
+    [Fact]
+    public void DefaultBoardsAlwaysPresent()
+    {
+        var path = TempFile();
+        try
+        {
+            System.IO.File.WriteAllText(path, """{"Boards":["Top 8 bracket"]}""");
+            var s = new SettingsStore(path).Load();
+            Assert.Contains("pairings", s.Boards);
+            Assert.Contains("standings", s.Boards);
+            Assert.Contains("Top 8 bracket", s.Boards);
+        }
+        finally { System.IO.File.Delete(path); }
+    }
+
+    [Fact]
+    public void TargetsAndBoardsRoundTrip()
+    {
+        var path = TempFile();
+        try
+        {
+            var store = new SettingsStore(path);
+            var s = new AppSettings();
+            s.SignageTargets.Add("pi-a.local");
+            s.SignageTargets.Add("pi-b.local");
+            s.Boards.Add("Top 8 bracket");
+            store.Save(s);
+            var back = store.Load();
+            Assert.Equal(new[] { "pi-a.local", "pi-b.local" }, back.SignageTargets);
+            Assert.Contains("Top 8 bracket", back.Boards);
+        }
+        finally { System.IO.File.Delete(path); }
+    }
 }
