@@ -32,11 +32,41 @@ public partial class WifiSetupWindow : Window
             }
             await Task.Delay(1000);
         }
-        DetectStatus.Text = "No Pi found. Check the cable is a DATA USB-C cable and wait for the Pi to boot.";
+        DetectStatus.Text = "No Pi found. Check the cable is a DATA USB-C cable and the Pi has booted.";
+        Detecting.Visibility = Visibility.Collapsed;
+        BtnRetry.Visibility = Visibility.Visible;   // let the user try again without reopening
+    }
+
+    async void Retry_Click(object s, RoutedEventArgs e)
+    {
+        BtnRetry.Visibility = Visibility.Collapsed;
+        Detecting.Visibility = Visibility.Visible;
+        DetectStatus.Text = "Looking for the Pi over USB…";
+        await DetectLoop();
+    }
+
+    // Effective password from whichever field is visible (masked vs shown).
+    string EffectivePassword => ChkShow.IsChecked == true ? TxtPassPlain.Text : TxtPass.Password;
+
+    void ChkShow_Changed(object s, RoutedEventArgs e)
+    {
+        if (ChkShow.IsChecked == true)
+        {
+            TxtPassPlain.Text = TxtPass.Password;
+            TxtPassPlain.Visibility = Visibility.Visible;
+            TxtPass.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            TxtPass.Password = TxtPassPlain.Text;
+            TxtPass.Visibility = Visibility.Visible;
+            TxtPassPlain.Visibility = Visibility.Collapsed;
+        }
+        Field_Changed(s, e);
     }
 
     void Field_Changed(object s, RoutedEventArgs e)
-        => BtnConnect.IsEnabled = TxtSsid.Text.Trim().Length > 0 && TxtPass.Password.Length > 0;
+        => BtnConnect.IsEnabled = TxtSsid.Text.Trim().Length > 0 && EffectivePassword.Length > 0;
 
     async void Connect_Click(object s, RoutedEventArgs e)
     {
@@ -46,7 +76,7 @@ public partial class WifiSetupWindow : Window
         Result.Text = $"Connecting the Pi to {TxtSsid.Text.Trim()}…";
         try
         {
-            var r = await _wifi.ConnectAsync(PiUsbBase, TxtSsid.Text.Trim(), TxtPass.Password);
+            var r = await _wifi.ConnectAsync(PiUsbBase, TxtSsid.Text.Trim(), EffectivePassword);
             bool ok = r.Ok && r.Connected;
             if (!ok)   // one confirming re-check in case connect returned before DHCP settled
             {

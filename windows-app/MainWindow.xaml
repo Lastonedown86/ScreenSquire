@@ -13,21 +13,23 @@
 
         <!-- ============ connect bar ============ -->
         <Border Grid.Row="0" Background="{StaticResource CardBg}" Padding="10,8" BorderBrush="#E5E7EB" BorderThickness="0,0,0,1">
-            <DockPanel>
+            <!-- wraps to a second line when narrow instead of clipping; device actions
+                 stay disabled until a device is selected/connected -->
+            <WrapPanel Orientation="Horizontal">
                 <TextBlock Text="Device:" VerticalAlignment="Center" Margin="0,0,6,0" FontWeight="SemiBold"/>
-                <Button Content="Tournament Signage" DockPanel.Dock="Right" Margin="8,0,0,0" Click="OpenSignage_Click"/>
-                <Button Content="Add a Pi" DockPanel.Dock="Right" Margin="8,0,0,0" Click="AddPi_Click"/>
-                <Button Content="Remote control" DockPanel.Dock="Right" Margin="8,0,0,0" Click="BtnRemote_Click"/>
-                <Button Content="Kiosk on/off" DockPanel.Dock="Right" Margin="8,0,0,0" Click="BtnKiosk_Click"/>
-                <Button x:Name="BtnScan" Content="Scan network" DockPanel.Dock="Right" Click="BtnScan_Click"/>
-                <Button x:Name="BtnForget" Content="Forget" DockPanel.Dock="Right" Margin="4,0,0,0" Click="BtnForget_Click"/>
-                <Button x:Name="BtnRename" Content="Rename" DockPanel.Dock="Right" Margin="4,0,0,0" Click="BtnRename_Click"/>
-                <Button x:Name="BtnConnect" Content="Connect" DockPanel.Dock="Right"
-                        Style="{StaticResource PrimaryButton}" Click="BtnConnect_Click"/>
-                <ComboBox x:Name="CmbAddress" IsEditable="True" MinWidth="260" Margin="0,0,8,0"
+                <ComboBox x:Name="CmbAddress" IsEditable="True" MinWidth="240" Margin="0,0,6,4"
                           VerticalContentAlignment="Center" DisplayMemberPath="Name"
-                          IsTextSearchEnabled="False"/>
-            </DockPanel>
+                          IsTextSearchEnabled="False" SelectionChanged="CmbAddress_SelectionChanged"/>
+                <Button x:Name="BtnConnect" Content="Connect" Style="{StaticResource PrimaryButton}"
+                        Margin="0,0,6,4" Click="BtnConnect_Click"/>
+                <Button x:Name="BtnScan" Content="Scan" Margin="0,0,6,4" Click="BtnScan_Click"/>
+                <Button x:Name="BtnRename" Content="Rename" Margin="0,0,6,4" Click="BtnRename_Click" IsEnabled="False"/>
+                <Button x:Name="BtnForget" Content="Forget" Margin="0,0,14,4" Click="BtnForget_Click" IsEnabled="False"/>
+                <Button x:Name="BtnKiosk" Content="Kiosk on/off" Margin="0,0,6,4" Click="BtnKiosk_Click" IsEnabled="False"/>
+                <Button x:Name="BtnRemote" Content="Remote control" Margin="0,0,14,4" Click="BtnRemote_Click" IsEnabled="False"/>
+                <Button Content="Tournament Signage" Margin="0,0,6,4" Click="OpenSignage_Click"/>
+                <Button Content="Add a Pi" Margin="0,0,0,4" Click="AddPi_Click"/>
+            </WrapPanel>
         </Border>
 
         <!-- ============ main area ============ -->

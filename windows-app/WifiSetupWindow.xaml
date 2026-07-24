@@ -8,7 +8,9 @@
         <StackPanel Orientation="Horizontal" Margin="0,6,0,12">
             <ProgressBar x:Name="Detecting" Width="120" Height="6" IsIndeterminate="True"/>
             <TextBlock x:Name="DetectStatus" Text="Looking for the Pi over USB…"
-                       Margin="10,0,0,0" VerticalAlignment="Center" Foreground="#666"/>
+                       Margin="10,0,0,0" VerticalAlignment="Center" Foreground="#666" TextWrapping="Wrap"/>
+            <Button x:Name="BtnRetry" Content="Retry" Visibility="Collapsed" Margin="10,0,0,0"
+                    Padding="8,2" Click="Retry_Click"/>
         </StackPanel>
 
         <Grid x:Name="Form" IsEnabled="False">
@@ -23,7 +25,12 @@
             </DockPanel>
             <DockPanel Grid.Row="2" Margin="0,0,0,10">
                 <TextBlock Text="Password" Width="120" VerticalAlignment="Center"/>
-                <PasswordBox x:Name="TxtPass" PasswordChanged="Field_Changed"/>
+                <CheckBox x:Name="ChkShow" Content="Show" DockPanel.Dock="Right" VerticalAlignment="Center"
+                          Margin="8,0,0,0" Checked="ChkShow_Changed" Unchecked="ChkShow_Changed"/>
+                <Grid>
+                    <PasswordBox x:Name="TxtPass" PasswordChanged="Field_Changed"/>
+                    <TextBox x:Name="TxtPassPlain" Visibility="Collapsed" TextChanged="Field_Changed"/>
+                </Grid>
             </DockPanel>
             <Button Grid.Row="3" x:Name="BtnConnect" Content="Connect to WiFi"
                     Click="Connect_Click" IsEnabled="False" Padding="12,5" HorizontalAlignment="Left"/>

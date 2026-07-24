@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Net.Http;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Threading;
 using Microsoft.Win32;
 
@@ -10,6 +11,7 @@ namespace PiSignage.Control;
 public partial class MainWindow : Window
 {
     private ApiClient? _api;
+    private string? _connectedHost;   // the Pi we're connected to (target for Kiosk/Remote)
     private readonly DispatcherTimer _poll = new() { Interval = TimeSpan.FromSeconds(3) };
     private readonly ObservableCollection<MediaFile> _media = new();
     private readonly ObservableCollection<PlaylistItem> _playlist = new();
@@ -107,6 +109,8 @@ public partial class MainWindow : Window
             var status = await _api.GetStatusAsync() ?? throw new HttpRequestException("Empty response");
             LblStatus.Text = $"Connected: {status.Name}";
             MainArea.IsEnabled = true;
+            _connectedHost = host;
+            BtnKiosk.IsEnabled = BtnRemote.IsEnabled = true;   // device actions target this Pi
             await ReloadMediaAsync();
             await ReloadPlaylistAsync();
             await RefreshStatusAsync();
@@ -117,10 +121,20 @@ public partial class MainWindow : Window
         {
             _poll.Stop();
             MainArea.IsEnabled = false;
+            _connectedHost = null;
+            BtnKiosk.IsEnabled = BtnRemote.IsEnabled = false;
             LblStatus.Text = "Not connected";
             return null;
         }
         finally { BtnConnect.IsEnabled = true; }
+    }
+
+    // Rename/Forget only make sense for a saved device that's actually selected.
+    private void CmbAddress_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        bool isSaved = CmbAddress.SelectedItem is PiSignage.Signage.SavedDevice;
+        if (BtnRename != null) BtnRename.IsEnabled = isSaved;
+        if (BtnForget != null) BtnForget.IsEnabled = isSaved;
     }
 
     // Scan mDNS, GET /api/status on each, return the IP whose Pi name matches.
@@ -200,12 +214,12 @@ public partial class MainWindow : Window
         }
     }
 
-    // Open a VNC session to the selected Pi so staff can drive the TV with kb/mouse.
+    // Open a VNC session to the CONNECTED Pi so staff can drive the TV with kb/mouse.
     void BtnRemote_Click(object sender, RoutedEventArgs e)
     {
-        if (CmbAddress.SelectedItem is not PiSignage.Signage.SavedDevice dev)
+        if (_connectedHost is null)
         {
-            MessageBox.Show(this, "Pick a saved Pi from the list first.", "Remote control",
+            MessageBox.Show(this, "Connect to a Pi first.", "Remote control",
                 MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
@@ -225,8 +239,8 @@ public partial class MainWindow : Window
         try
         {
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
-                viewer, PiSignage.Signage.VncLauncher.Target(dev.Ip)) { UseShellExecute = false });
-            LblStatus.Text = $"Opening remote control for {dev.Name} ({dev.Ip}:{PiSignage.Signage.VncLauncher.Port})…";
+                viewer, PiSignage.Signage.VncLauncher.Target(_connectedHost)) { UseShellExecute = false });
+            LblStatus.Text = $"Opening remote control ({_connectedHost}:{PiSignage.Signage.VncLauncher.Port})…";
         }
         catch (System.Exception ex) { MessageBox.Show(this, "Couldn't open the viewer: " + ex.Message); }
     }
