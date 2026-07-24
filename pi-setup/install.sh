@@ -13,7 +13,9 @@ echo "==> Installing for user: $USER_NAME ($HOME_DIR)"
 
 # ---------------------------------------------------------------- packages
 sudo apt-get update
-sudo apt-get install -y python3-venv chromium-browser
+# Trixie ships the binary as `chromium`; Bookworm as `chromium-browser`. Install
+# whichever exists (kiosk.sh auto-detects the binary name at runtime).
+sudo apt-get install -y python3-venv chromium unzip || sudo apt-get install -y python3-venv chromium-browser unzip
 
 # ---------------------------------------------------------------- agent
 if [ ! -d "$AGENT_DIR" ]; then
@@ -53,21 +55,43 @@ sudo systemctl enable --now signage-agent.service
 
 # ---------------------------------------------------------------- kiosk launcher
 mkdir -p "$APP_DIR"
+
+# h264ify: forces YouTube (and other HTML5 video) to H.264 so the Pi 4 HARDWARE-
+# decodes it. YouTube's default VP9 has no HW decoder on the Pi 4 -> software ->
+# stutter. Downloaded from the Chrome Web Store, unpacked for --load-extension.
+H264DIR="$HOME_DIR/h264ify"
+rm -rf "$H264DIR"; mkdir -p "$H264DIR"
+if curl -sL -o /tmp/h264ify.crx "https://clients2.google.com/service/update2/crx?response=redirect&acceptformat=crx2,crx3&prodversion=120.0&x=id%3Daleakchihdccplidncghkekgioiakgal%26installsource%3Dondemand%26uc"; then
+  python3 -c "d=open('/tmp/h264ify.crx','rb').read(); i=d.find(b'PK\x03\x04'); open('/tmp/h264ify.zip','wb').write(d[i:])" \
+    && unzip -oq /tmp/h264ify.zip -d "$H264DIR" && rm -rf "$H264DIR/_metadata"
+fi
+
 cat > "$APP_DIR/kiosk.sh" <<'EOF'
 #!/usr/bin/env bash
-# Wait for the agent, then run Chromium fullscreen forever.
+# Wait for the agent, then run Chromium fullscreen on the signage page forever.
+CHROME="$(command -v chromium || command -v chromium-browser)"   # Trixie=chromium, Bookworm=chromium-browser
+PROFILE="$HOME/.config/pisignage-kiosk"                          # dedicated profile (no stray tabs/logins)
+EXTFLAG=""; [ -f "$HOME/h264ify/manifest.json" ] && EXTFLAG="--load-extension=$HOME/h264ify"
 until curl -sf http://localhost:8080/api/status >/dev/null; do sleep 1; done
 while true; do
-  chromium-browser \
-    --kiosk http://localhost:8080/ \
-    --noerrdialogs --disable-infobars --disable-session-crashed-bubble \
-    --autoplay-policy=no-user-gesture-required \
-    --check-for-update-interval=31536000 \
-    --overscroll-history-navigation=0
+  # never let a saved session/tab take over — always open the signage page
+  rm -f "$PROFILE"/Default/Current\ Session "$PROFILE"/Default/Current\ Tabs \
+        "$PROFILE"/Default/Last\ Session "$PROFILE"/Default/Last\ Tabs 2>/dev/null
+  "$CHROME" --kiosk "http://localhost:8080/" --user-data-dir="$PROFILE" \
+    --noerrdialogs --disable-infobars --disable-session-crashed-bubble --no-first-run \
+    --disable-features=Translate --autoplay-policy=no-user-gesture-required \
+    --check-for-update-interval=31536000 --overscroll-history-navigation=0 \
+    --enable-gpu-rasterization --ignore-gpu-blocklist $EXTFLAG
   sleep 2   # if Chromium ever crashes, relaunch it
 done
 EOF
 chmod +x "$APP_DIR/kiosk.sh"
+
+# ---- zram: compressed swap for the 2GB Pi (faster + saves SD wear vs SD swap) ----
+sudo apt-get install -y zram-tools
+printf 'ALGO=zstd\nPERCENT=150\n' | sudo tee /etc/default/zramswap >/dev/null
+sudo systemctl enable --now zramswap.service 2>/dev/null || true
+sudo systemctl restart zramswap.service 2>/dev/null || true
 
 # ---- kiosk as a systemd USER service, so the app can stop/start it on demand ----
 # (stopping it drops the Pi to its desktop, controllable over VNC; starting it
@@ -80,7 +104,12 @@ After=graphical-session.target
 PartOf=graphical-session.target
 
 [Service]
+# full desktop-session env so Chromium can actually render (missing these = a
+# white screen: it launches but can't compose to the Wayland surface)
 Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_RUNTIME_DIR=/run/user/$USER_UID
+Environment=XDG_CURRENT_DESKTOP=labwc:wlroots
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$USER_UID/bus
 ExecStart=$APP_DIR/kiosk.sh
 # make sure stopping the kiosk really clears Chromium off the screen
 ExecStopPost=-/usr/bin/pkill -f chromium
