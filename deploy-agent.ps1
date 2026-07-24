@@ -18,9 +18,17 @@ if (-not $Hosts) {
     if (-not (Test-Path $devicesFile)) {
         Write-Error "No -Hosts given and no saved devices at $devicesFile"; exit 1
     }
-    $devices = Get-Content $devicesFile | ConvertFrom-Json
+    try {
+        $devices = Get-Content $devicesFile | ConvertFrom-Json
+    } catch {
+        Write-Error "Couldn't read the saved Pi list at $devicesFile — pass -Hosts instead"; exit 1
+    }
     $Hosts = $devices | ForEach-Object { $_.Ip }
     Write-Host "Deploying $expected to saved Pis: $($devices | ForEach-Object { "$($_.Name) ($($_.Ip))" } | Join-String -Separator ', ')"
+}
+
+if (-not $Hosts) {
+    Write-Error "No Pis to deploy to — add a Pi in the control app first or pass -Hosts"; exit 1
 }
 
 # build the zip once: main.py at the root + static/ folder
