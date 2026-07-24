@@ -17,7 +17,7 @@
 - `pairings` and `standings` boards are permanent — never removable.
 - Build check for WPF tasks: `dotnet build windows-app/PiSignageControl.csproj` (must succeed; WPF has no UI tests — manual smoke per task).
 - Core tests: `dotnet test signage-core.Tests/signage-core.Tests.csproj`.
-- Agent tests: `cd agent `cd agent && ./.venv/Scripts/python.exe -m pytest tests -q` (run from repo root)`cd agent && ./.venv/Scripts/python.exe -m pytest tests -q` (run from repo root) ./.venv/Scripts/python.exe -m pytest tests -q` (must run from `agent/` — tests `import main`).
+- Agent tests: `cd agent && ./.venv/Scripts/python.exe -m pytest tests -q` (must run from `agent/` — tests `import main`).
 
 ---
 
