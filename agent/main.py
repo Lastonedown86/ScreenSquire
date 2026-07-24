@@ -14,16 +14,21 @@ Run for development:
 """
 
 import asyncio
+import io
 import json
 import logging
 import mimetypes
 import os
+import py_compile
+import re
 import shutil
 import socket
+import tempfile
 import time
 import uuid
+import zipfile
 from contextlib import asynccontextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
@@ -435,6 +440,74 @@ async def set_kiosk(req: KioskRequest):
     if rc != 0:
         return {"ok": False, "running": None, "error": (err.strip() or out.strip() or "systemctl failed")}
     return {"ok": True, "running": req.running, "error": None}
+
+
+# ---- self-update (pushed from the control app / deploy script; no SSH) ----
+_UPDATE_MAX_BYTES = 20 * 1024 * 1024
+_VERSION_RE = re.compile(r'AGENT_VERSION\s*=\s*"([^"]+)"')
+
+
+async def _restart_after_update() -> None:
+    # let the HTTP response flush before we pull the rug out
+    await asyncio.sleep(1.0)
+    await _systemctl_user("restart", KIOSK_UNIT)  # TV picks up new static pages
+    os._exit(0)  # systemd Restart=always relaunches us with the new code
+
+
+@app.post("/api/update")
+async def update_agent(file: UploadFile):
+    data = await file.read()
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        raise HTTPException(400, "That doesn't look like a valid update file")
+
+    total = 0
+    for info in zf.infolist():
+        name = info.filename
+        if name.endswith("/"):
+            if name != "static/" and not name.startswith("static/"):
+                raise HTTPException(400, f"Unexpected folder in update: {name}")
+            continue
+        parts = PurePosixPath(name).parts
+        if name.startswith("/") or ".." in parts or ":" in name or "\\" in name:
+            raise HTTPException(400, f"Unsafe path in update: {name}")
+        if name != "main.py" and not name.startswith("static/"):
+            raise HTTPException(400, f"Unexpected file in update: {name}")
+        total += info.file_size
+    if total > _UPDATE_MAX_BYTES:
+        raise HTTPException(400, "Update is too large")
+    if "main.py" not in zf.namelist():
+        raise HTTPException(400, "Update is missing main.py")
+
+    tmp = Path(tempfile.mkdtemp(prefix="update-tmp-", dir=APP_DIR))
+    try:
+        zf.extractall(tmp)  # safe: every entry name validated above
+        try:
+            py_compile.compile(str(tmp / "main.py"), doraise=True)
+        except py_compile.PyCompileError as e:
+            raise HTTPException(400, f"New main.py won't run (syntax error): {e}")
+
+        m = _VERSION_RE.search((tmp / "main.py").read_text())
+        new_version = m.group(1) if m else "unknown"
+
+        # one level of backup for manual recovery over SSH if a bad update lands
+        backup = APP_DIR / "update-backup"
+        shutil.rmtree(backup, ignore_errors=True)
+        backup.mkdir()
+        shutil.copy2(APP_DIR / "main.py", backup / "main.py")
+        if (APP_DIR / "static").exists():
+            shutil.copytree(APP_DIR / "static", backup / "static")
+
+        shutil.copy2(tmp / "main.py", APP_DIR / "main.py")
+        if (tmp / "static").exists():
+            shutil.copytree(tmp / "static", APP_DIR / "static", dirs_exist_ok=True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    asyncio.create_task(_restart_after_update())
+    log.info("Agent updated to %s — restarting", new_version)
+    return {"ok": True, "version": new_version}
 
 
 @app.websocket("/ws")
