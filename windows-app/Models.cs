@@ -14,6 +14,7 @@ public class StatusInfo
     [JsonPropertyName("playlist_enabled")] public bool PlaylistEnabled { get; set; }
     [JsonPropertyName("override_active")] public bool OverrideActive { get; set; }
     [JsonPropertyName("now_showing")] public NowShowing? NowShowing { get; set; }
+    [JsonPropertyName("agent_version")] public string? AgentVersion { get; set; }
 }
 
 public class NowShowing

@@ -245,6 +245,56 @@ public partial class MainWindow : Window
         }
     }
 
+    // Push the agent software bundled inside this exe to every saved, reachable,
+    // out-of-date Pi (not just the one currently connected).
+    private async void BtnUpdatePi_Click(object sender, RoutedEventArgs e)
+    {
+        var bundled = AgentBundle.Version();
+        if (bundled == null || _api == null) return;
+        BtnUpdatePi.IsEnabled = false;
+        try
+        {
+            Toaster.Show("Updating your Pi — the TV will blink once. This takes about half a minute…");
+            var zip = PiSignage.Signage.AgentUpdater.BuildZip(AgentBundle.Files());
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+
+            // update every saved Pi that's reachable and out of date; connected Pi included
+            var targets = _devices.Where(d => !string.IsNullOrEmpty(d.Ip)).ToList();
+            int ok = 0, skipped = 0; var failedNames = new List<string>();
+            foreach (var dev in targets)
+            {
+                var baseUrl = $"http://{dev.Ip}:8080";
+                try
+                {
+                    string? current = null;
+                    try
+                    {
+                        using var doc = System.Text.Json.JsonDocument.Parse(
+                            await http.GetStringAsync($"{baseUrl}/api/status"));
+                        if (doc.RootElement.TryGetProperty("agent_version", out var v))
+                            current = v.GetString();
+                    }
+                    catch (Exception) { skipped++; continue; }   // off / unreachable — leave it alone
+                    if (current == bundled) { skipped++; continue; }  // already up to date
+
+                    await PiSignage.Signage.AgentUpdater.PushAsync(http, baseUrl, zip, bundled);
+                    ok++;
+                }
+                catch (HttpRequestException) { failedNames.Add($"{dev.Name} (needs a one-time manual update)"); }
+                catch (Exception) { failedNames.Add(dev.Name); }
+            }
+
+            if (failedNames.Count == 0)
+                Toaster.Show(ok > 0 ? $"Done — {ok} Pi{(ok == 1 ? "" : "s")} updated." : "Everything was already up to date.",
+                             ToastKind.Success);
+            else
+                Toaster.Show($"Updated {ok}, but these didn't finish: {string.Join(", ", failedNames)}. " +
+                             "Check they're powered on and try again.", ToastKind.Warning);
+            await RefreshStatusAsync();
+        }
+        finally { BtnUpdatePi.IsEnabled = true; }
+    }
+
     // Open a VNC session to the CONNECTED Pi so staff can drive the TV with kb/mouse.
     void BtnRemote_Click(object sender, RoutedEventArgs e)
     {
@@ -328,6 +378,9 @@ public partial class MainWindow : Window
                 "url" => $"Now: {s.NowShowing.Src}",
                 _ => $"Now: {s.NowShowing.Type} {System.IO.Path.GetFileName(s.NowShowing.Src ?? "")}"
             };
+            BtnUpdatePi.Visibility =
+                AgentBundle.Version() is string bundled && s.AgentVersion != bundled
+                    ? Visibility.Visible : Visibility.Collapsed;
         }
         catch
         {
