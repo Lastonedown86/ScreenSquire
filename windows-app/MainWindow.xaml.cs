@@ -250,7 +250,7 @@ public partial class MainWindow : Window
         if (viewer == null)
         {
             if (MessageBox.Show(this,
-                    "No VNC viewer is installed. Install TightVNC Viewer now? (a winget window will open)",
+                    "No VNC viewer is installed. Install TigerVNC Viewer now? (a winget window will open)",
                     "Remote control", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
             {
                 try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
