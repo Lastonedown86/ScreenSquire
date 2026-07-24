@@ -41,6 +41,7 @@ MEDIA_DIR = DATA_DIR / "media"
 PLAYLIST_FILE = DATA_DIR / "playlist.json"
 PORT = int(os.environ.get("SIGNAGE_PORT", "8080"))
 NAME_FILE = DATA_DIR / "name.txt"
+AGENT_VERSION = "2026.07.24.1"  # bump on every agent change; the app compares this
 
 
 def _load_name() -> str:
@@ -475,6 +476,7 @@ async def status():
     return {
         "name": DEVICE_NAME,
         "version": app.version,
+        "agent_version": AGENT_VERSION,
         "screens_connected": len(hub.clients),
         "playlist_items": len(state.playlist.items),
         "playlist_enabled": state.playlist.enabled,
