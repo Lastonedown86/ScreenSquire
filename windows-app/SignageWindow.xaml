@@ -42,6 +42,12 @@
                         ToolTip="Start the countdown (or press Enter)"/>
                 <Button x:Name="BtnStop" Content="St_op" Click="StopTimer_Click" Margin="6,0,0,0" Padding="8,3"
                         ToolTip="Stop the countdown"/>
+                <Button x:Name="BtnPause" Content="_Pause" Click="PauseResume_Click" Margin="6,0,0,0" Padding="8,3"
+                        IsEnabled="False" ToolTip="Pause the round clock — click again to resume"
+                        ToolTipService.ShowOnDisabled="True"/>
+                <Button x:Name="BtnExtend" Content="+5 _min" Click="Extend_Click" Margin="6,0,0,0" Padding="8,3"
+                        IsEnabled="False" ToolTip="Add 5 minutes to the round clock"
+                        ToolTipService.ShowOnDisabled="True"/>
                 <!-- one-click round presets, filled from settings in code -->
                 <StackPanel x:Name="Presets" Orientation="Horizontal" Margin="10,0,0,0"/>
                 <StackPanel Margin="16,0,0,0" VerticalAlignment="Center">

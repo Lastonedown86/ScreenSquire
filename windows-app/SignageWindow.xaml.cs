@@ -17,6 +17,8 @@ public partial class SignageWindow : Window
     (int x, int y, int w, int h)? _lastRegion;
     DateTime? _endsAtLocal;                 // app-side countdown target (mirrors the TV)
     readonly DispatcherTimer _clockTick;
+    int _pausedRemaining;     // seconds left while paused (app-side truth)
+    bool _timeUpFired;        // one alert per round
 
     sealed class TvChoice
     {
@@ -183,6 +185,16 @@ public partial class SignageWindow : Window
 
     void UpdateClock()
     {
+        BtnPause.IsEnabled = BtnExtend.IsEnabled =
+            _timer.State != PiSignage.Signage.TimerRunState.Stopped && Targets.Any();
+
+        if (_timer.State == PiSignage.Signage.TimerRunState.Paused)
+        {
+            ClockDisplay.Text = $"{_pausedRemaining / 60:00}:{_pausedRemaining % 60:00}";
+            ClockDisplay.Foreground = (System.Windows.Media.Brush)FindResource("TextMuted");
+            TimerInfo.Text = $"Round {_timer.Round} — paused (click Resume to continue)";
+            return;
+        }
         if (_endsAtLocal is not { } end)
         {
             ClockDisplay.Text = "—:—";
@@ -197,6 +209,12 @@ public partial class SignageWindow : Window
             ClockDisplay.Text = "TIME";
             ClockDisplay.Foreground = (System.Windows.Media.Brush)FindResource("Error");
             TimerInfo.Text = $"{round} — time's up (click Stop to clear)";
+            if (!_timeUpFired)
+            {
+                _timeUpFired = true;
+                System.Media.SystemSounds.Exclamation.Play();
+                Toaster.Show($"{round} — time is up!", ToastKind.Info);
+            }
         }
         else
         {
@@ -307,23 +325,75 @@ public partial class SignageWindow : Window
         UpdateClock();
     }
 
+    async Task<bool> StartRound(int min, int round)
+    {
+        _timer.Start(min, $"Round {round}", round);
+        _endsAtLocal = DateTime.UtcNow.AddSeconds(min * 60);
+        _timerEditPending = false; _timeUpFired = false;
+        BtnPause.Content = "_Pause";
+        UpdateClock();
+        App.Settings.TimerMinutes = min;
+        App.SaveSettings();
+        return await Post($"Round {round} started");
+    }
+
     async void StartTimer_Click(object s, RoutedEventArgs e)
     {
         int min = int.TryParse(TxtMinutes.Text, out var m) ? m : 25;
         int round = int.TryParse(TxtRound.Text, out var rd) ? rd : 1;
-        _timer.Start(min, $"Round {round}", round);
-        _endsAtLocal = DateTime.UtcNow.AddSeconds(min * 60);
-        _timerEditPending = false;
-        UpdateClock();
-        App.Settings.TimerMinutes = min;
-        App.SaveSettings();
         BtnStart.IsEnabled = BtnStop.IsEnabled = false;
         try
         {
-            if (await Post($"Round {round} started"))
+            if (await StartRound(min, round))
                 Toaster.Show($"Round {round} started — {min} minutes on the TV clock.", ToastKind.Success);
         }
         finally { UpdateActionButtons(); }
+    }
+
+    async void PauseResume_Click(object s, RoutedEventArgs e)
+    {
+        if (_timer.State == PiSignage.Signage.TimerRunState.Running && _endsAtLocal is { } end)
+        {
+            _pausedRemaining = Math.Max(0, (int)Math.Round((end - DateTime.UtcNow).TotalSeconds));
+            _timer.Pause(_pausedRemaining);
+            _endsAtLocal = null;
+            BtnPause.Content = "_Resume";
+            UpdateClock();
+            if (await Post("Timer paused"))
+                Toaster.Show("Round clock paused — click Resume when you're ready.", ToastKind.Success);
+        }
+        else if (_timer.State == PiSignage.Signage.TimerRunState.Paused)
+        {
+            _timer.Resume(_pausedRemaining);
+            _endsAtLocal = DateTime.UtcNow.AddSeconds(_pausedRemaining);
+            BtnPause.Content = "_Pause";
+            UpdateClock();
+            if (await Post("Timer resumed"))
+                Toaster.Show("Round clock running again.", ToastKind.Success);
+        }
+    }
+
+    async void Extend_Click(object s, RoutedEventArgs e)
+    {
+        if (_timer.State == PiSignage.Signage.TimerRunState.Running && _endsAtLocal is { } end)
+        {
+            var rem = Math.Max(0, (int)Math.Round((end - DateTime.UtcNow).TotalSeconds)) + 300;
+            _timer.Resume(rem);                      // still running, new remaining
+            _endsAtLocal = DateTime.UtcNow.AddSeconds(rem);
+            _timeUpFired = false;
+            UpdateClock();
+            if (await Post("Added 5 minutes"))
+                Toaster.Show("Added 5 minutes to the round clock.", ToastKind.Success);
+        }
+        else if (_timer.State == PiSignage.Signage.TimerRunState.Paused)
+        {
+            _pausedRemaining += 300;
+            _timer.Pause(_pausedRemaining);
+            _timeUpFired = false;
+            UpdateClock();
+            if (await Post("Added 5 minutes"))
+                Toaster.Show("Added 5 minutes to the round clock.", ToastKind.Success);
+        }
     }
 
     async void StopTimer_Click(object s, RoutedEventArgs e)
@@ -331,6 +401,8 @@ public partial class SignageWindow : Window
         _timer.Stop();
         _endsAtLocal = null;
         _timerEditPending = false;
+        BtnPause.Content = "_Pause";
+        _timeUpFired = false;
         UpdateClock();
         BtnStart.IsEnabled = BtnStop.IsEnabled = false;
         try
