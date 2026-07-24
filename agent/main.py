@@ -445,6 +445,7 @@ async def set_kiosk(req: KioskRequest):
 # ---- self-update (pushed from the control app / deploy script; no SSH) ----
 _UPDATE_MAX_BYTES = 20 * 1024 * 1024
 _VERSION_RE = re.compile(r'AGENT_VERSION\s*=\s*"([^"]+)"')
+_restart_task: Optional[asyncio.Task] = None  # strong ref: keep the restart task from being GC'd
 
 
 async def _restart_after_update() -> None:
@@ -507,6 +508,7 @@ async def update_agent(file: UploadFile):
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+    global _restart_task
     _restart_task = asyncio.create_task(_restart_after_update())
     log.info("Agent updated to %s — restarting", new_version)
     return {"ok": True, "version": new_version}
