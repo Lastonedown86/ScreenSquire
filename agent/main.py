@@ -250,7 +250,9 @@ app = FastAPI(title="Pi Signage Agent", version="0.1.0", lifespan=lifespan)
 # ---- kiosk page + media ----
 @app.get("/")
 async def kiosk_page():
-    return FileResponse(APP_DIR / "static" / "kiosk.html")
+    # no-store: the kiosk must always pick up page updates on reload
+    return FileResponse(APP_DIR / "static" / "kiosk.html",
+                        headers={"Cache-Control": "no-store"})
 
 
 app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")

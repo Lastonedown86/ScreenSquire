@@ -17,7 +17,19 @@
 
   /* idle card — shown only when there is no playlist yet */
   #idle { color: #3a3a3a; font: 500 3.5vmin/1.5 system-ui, sans-serif;
-          flex-direction: column; text-align: center; letter-spacing: .04em; }
+          text-align: center; letter-spacing: .04em; }
+  /* anti burn-in: the idle card drifts around the screen forever, so no
+     pixel stays lit in one place (background is pure black = safe) */
+  #idleInner { display: flex; flex-direction: column; align-items: center;
+               animation: drift 240s ease-in-out infinite; }
+  @keyframes drift {
+    0%   { transform: translate(0, 0); }
+    20%  { transform: translate(24vw, 18vh); }
+    40%  { transform: translate(-22vw, 24vh); }
+    60%  { transform: translate(-24vw, -18vh); }
+    80%  { transform: translate(22vw, -24vh); }
+    100% { transform: translate(0, 0); }
+  }
   #idle .dot { width: 1.2vmin; height: 1.2vmin; border-radius: 50%; background: #2e7d32;
                margin-bottom: 2vmin; animation: pulse 2.4s infinite; }
   @keyframes pulse { 50% { opacity: .3; } }
@@ -30,7 +42,7 @@
 </style>
 </head>
 <body>
-  <div class="layer" id="idle"><div class="dot"></div><div id="idleText">Ready — waiting for content</div></div>
+  <div class="layer" id="idle"><div id="idleInner"><div class="dot"></div><div id="idleText">Ready — waiting for content</div></div></div>
   <div class="layer" id="a"></div>
   <div class="layer" id="b"></div>
   <div id="offline">Reconnecting…</div>
