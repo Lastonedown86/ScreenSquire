@@ -292,6 +292,10 @@ public partial class MainWindow : Window
                              "Check they're powered on and try again.", ToastKind.Warning);
             await RefreshStatusAsync();
         }
+        catch (Exception ex)
+        {
+            Toaster.Show("Couldn't update your Pis: " + ex.Message, ToastKind.Error);
+        }
         finally { BtnUpdatePi.IsEnabled = true; }
     }
 
@@ -385,6 +389,7 @@ public partial class MainWindow : Window
         catch
         {
             LblStatus.Text = "Connection lost — retrying…";
+            BtnUpdatePi.Visibility = Visibility.Collapsed;
         }
     }
 
