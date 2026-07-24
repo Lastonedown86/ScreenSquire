@@ -42,6 +42,10 @@
                         ToolTip="Start the countdown (or press Enter)"/>
                 <Button x:Name="BtnStop" Content="St_op" Click="StopTimer_Click" Margin="6,0,0,0" Padding="8,3"
                         ToolTip="Stop the countdown"/>
+                <Button x:Name="BtnNextRound" Content="▶ _Next round" Click="NextRound_Click"
+                        Style="{StaticResource PrimaryButton}" Margin="10,0,0,0" Padding="10,3"
+                        ToolTip="Put the new pairings on your screen first, then click — this captures them, sends them to the ticked TVs, and starts the clock"
+                        ToolTipService.ShowOnDisabled="True"/>
                 <Button x:Name="BtnPause" Content="_Pause" Click="PauseResume_Click" Margin="6,0,0,0" Padding="8,3"
                         IsEnabled="False" ToolTip="Pause the round clock — click again to resume"
                         ToolTipService.ShowOnDisabled="True"/>

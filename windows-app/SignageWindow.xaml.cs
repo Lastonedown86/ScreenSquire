@@ -237,6 +237,50 @@ public partial class SignageWindow : Window
         BtnStart.IsEnabled = BtnStop.IsEnabled = any;
         BtnRecapture.IsEnabled = any && _lastRegion is not null;
         BtnCapture.IsEnabled = BtnPin.IsEnabled = BtnBack.IsEnabled = any;
+        BtnNextRound.IsEnabled = any;
+    }
+
+    // Selects a board in the picker by its display name (no-op if not present).
+    void SelectBoard(string display)
+    {
+        foreach (var item in CmbSlot.Items)
+            if (string.Equals(item is ComboBoxItem c ? c.Content?.ToString() : item?.ToString(),
+                              display, StringComparison.OrdinalIgnoreCase))
+            { CmbSlot.SelectedItem = item; return; }
+    }
+
+    // One click = whole round turnover: round+1, capture pairings, push, start clock.
+    async void NextRound_Click(object s, RoutedEventArgs e)
+    {
+        int round = (int.TryParse(TxtRound.Text, out var r) ? r : 0) + 1;
+        int min = int.TryParse(TxtMinutes.Text, out var m) ? m : 25;
+        TxtRound.Text = round.ToString();
+        SelectBoard("pairings");            // Slot_Changed restores the pairings region
+
+        if (_lastRegion is null)
+        {
+            var sel = new RegionSelectorWindow
+            {
+                Owner = this,
+                Instruction = "First time: drag a box around the pairings — Esc to cancel",
+            };
+            if (sel.ShowDialog() != true || sel.Result is null) return;
+            _lastRegion = sel.Result;
+            BtnRecapture.IsEnabled = true;
+        }
+
+        BtnNextRound.IsEnabled = false;
+        try
+        {
+            await CaptureAndPush(_lastRegion.Value);
+            if (await StartRound(min, round))
+            {
+                int n = Targets.Count();
+                Toaster.Show($"Round {round} started — pairings sent to {n} TV{(n == 1 ? "" : "s")}, {min}:00 on the clock.",
+                             ToastKind.Success);
+            }
+        }
+        finally { BtnNextRound.IsEnabled = true; UpdateActionButtons(); }
     }
 
     async void Capture_Click(object s, RoutedEventArgs e)
