@@ -48,6 +48,13 @@
     if(!on) $('view-'+view).classList.remove('hidden');
   }
 
+  // a missing/deleted image must never leave the TV black — say what happened
+  $('board-img').onerror = () => {
+    curSrc = null;
+    $('idle').textContent = 'Board image missing — push again from the app';
+    showIdle(true);
+  };
+
   function render(){
     if(view === 'board'){
       const src = data && data.view_data && data.view_data.boards

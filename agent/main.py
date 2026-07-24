@@ -40,7 +40,22 @@ DATA_DIR = Path(os.environ.get("SIGNAGE_DATA", APP_DIR / "data"))
 MEDIA_DIR = DATA_DIR / "media"
 PLAYLIST_FILE = DATA_DIR / "playlist.json"
 PORT = int(os.environ.get("SIGNAGE_PORT", "8080"))
-DEVICE_NAME = os.environ.get("SIGNAGE_NAME", socket.gethostname())
+NAME_FILE = DATA_DIR / "name.txt"
+
+
+def _load_name() -> str:
+    # a rename from the control app (name.txt) wins over env/hostname
+    try:
+        if NAME_FILE.exists():
+            n = NAME_FILE.read_text().strip()
+            if n:
+                return n
+    except Exception:
+        log.exception("Couldn't read name.txt, falling back")
+    return os.environ.get("SIGNAGE_NAME", socket.gethostname())
+
+
+DEVICE_NAME = _load_name()
 
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -433,6 +448,27 @@ async def ws_endpoint(ws: WebSocket):
 
 
 # ---- control API (used by the Windows app) ----
+class RenameRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+
+
+@app.post("/api/name")
+async def set_name(req: RenameRequest):
+    """Rename this Pi. Persists across restarts and refreshes the TV splash."""
+    global DEVICE_NAME
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(400, "Name cannot be blank")
+    DEVICE_NAME = name
+    tmp = NAME_FILE.with_suffix(".tmp")
+    tmp.write_text(name)
+    tmp.replace(NAME_FILE)  # atomic, like the playlist
+    state.bump()  # re-sends the idle splash so the TV shows the new name
+    # ponytail: mDNS keeps advertising the old name until the agent restarts;
+    # discovery still works because the app probes /api/status for the name
+    return {"ok": True, "name": DEVICE_NAME}
+
+
 @app.get("/api/status")
 async def status():
     return {
@@ -509,6 +545,9 @@ async def delete_media(name: str):
     in_use = any(i.source == safe for i in state.playlist.items)
     if in_use:
         raise HTTPException(409, "File is used by the current playlist")
+    boards = (_dashboard.get("view_data") or {}).get("boards") or {}
+    if any(v == f"/media/{safe}" for v in boards.values()):
+        raise HTTPException(409, "File is shown on a dashboard board")
     target.unlink()
     return {"ok": True}
 
