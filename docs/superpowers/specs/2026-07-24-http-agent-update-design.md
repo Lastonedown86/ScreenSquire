@@ -79,9 +79,9 @@ SSH is no longer part of the update path.
 ### 3. Windows app: admin update UI
 
 - Build: the csproj embeds `../agent/main.py` and `../agent/static/**` as
-  embedded resources, plus the bundled `AGENT_VERSION` (read from main.py at
-  build time or duplicated as an assembly constant — implementation's choice,
-  but there must be exactly one source of truth: main.py).
+  embedded resources. The app reads its bundled `AGENT_VERSION` by regex from
+  the embedded main.py at runtime — main.py is the single source of truth and
+  there is no build-time version step.
 - The app zips the embedded files at runtime when pushing (keeps the build
   simple; no build-time zip step).
 - Device list: when a Pi's `/api/status.agent_version` is older than the
