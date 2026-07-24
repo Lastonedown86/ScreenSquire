@@ -100,10 +100,11 @@ autologin.
 Use `deploy-agent.ps1` (from your Windows PC) to push updates over HTTP to `/api/update`:
 
 ```powershell
-.\deploy-agent.ps1 -piAddress <pi-address>
+.\deploy-agent.ps1                    # every Pi saved in the control app
+.\deploy-agent.ps1 -Hosts 192.168.0.58, pisignage2.local
 ```
 
-This updates the agent without SSH. **Note:** Changes to `venv/requirements.txt`
+This updates the agent without SSH. Omit `-Hosts` to update every saved Pi; specify addresses to update only those. **Note:** Changes to `venv/requirements.txt`
 and pre-`/api/update` agents still require manual SSH deployment.
 
 ## Pre-imaging a unit for USB WiFi setup (builder)
