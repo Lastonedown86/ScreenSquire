@@ -1,13 +1,17 @@
-# Push the agent (main.py + static pages) to Pis and restart their services.
+#Requires -Version 7
+# Push the agent (main.py + static pages) to Pis over HTTP — no SSH, no password.
 #   .\deploy-agent.ps1                 # deploys to every Pi saved in the control app
 #   .\deploy-agent.ps1 -Hosts 192.168.0.58, pisignage2.local
-#   .\deploy-agent.ps1 -User admin
+# Requires PowerShell 7 (Invoke-RestMethod -Form).
 param(
     [string[]]$Hosts,
-    [string]$User = "pi"
+    [int]$Port = 8080
 )
 
 $agentDir = Join-Path $PSScriptRoot "agent"
+
+$expected = (Select-String -Path (Join-Path $agentDir "main.py") -Pattern 'AGENT_VERSION\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+if (-not $expected) { Write-Error "Couldn't read AGENT_VERSION from agent\main.py"; exit 1 }
 
 if (-not $Hosts) {
     # same list the control app uses
@@ -15,25 +19,53 @@ if (-not $Hosts) {
     if (-not (Test-Path $devicesFile)) {
         Write-Error "No -Hosts given and no saved devices at $devicesFile"; exit 1
     }
-    $devices = Get-Content $devicesFile | ConvertFrom-Json
+    try {
+        $devices = Get-Content $devicesFile | ConvertFrom-Json
+    } catch {
+        Write-Error "Couldn't read the saved Pi list at $devicesFile — pass -Hosts instead"; exit 1
+    }
     $Hosts = $devices | ForEach-Object { $_.Ip }
-    Write-Host "Deploying to saved Pis: $($devices | ForEach-Object { "$($_.Name) ($($_.Ip))" } | Join-String -Separator ', ')"
+    Write-Host "Deploying $expected to saved Pis: $($devices | ForEach-Object { "$($_.Name) ($($_.Ip))" } | Join-String -Separator ', ')"
 }
+
+if (-not $Hosts) {
+    Write-Error "No Pis to deploy to — add a Pi in the control app first or pass -Hosts"; exit 1
+}
+
+# build the zip once: main.py at the root + static/ folder
+$staging = Join-Path ([IO.Path]::GetTempPath()) "pisignage-agent-update"
+$zip = "$staging.zip"
+Remove-Item $staging, $zip -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory $staging | Out-Null
+Copy-Item (Join-Path $agentDir "main.py") $staging
+Copy-Item (Join-Path $agentDir "static") $staging -Recurse
+Compress-Archive -Path (Join-Path $staging "main.py"), (Join-Path $staging "static") -DestinationPath $zip
 
 $failed = @()
 foreach ($h in $Hosts) {
     Write-Host "`n==> $h"
-    ssh "${User}@${h}" "rm -rf /tmp/agent-push && mkdir -p /tmp/agent-push"
-    if ($LASTEXITCODE -ne 0) { Write-Warning "$h — unreachable over SSH"; $failed += $h; continue }
+    $base = "http://${h}:$Port"
+    try {
+        $resp = Invoke-RestMethod -Method Post -Uri "$base/api/update" -Form @{ file = Get-Item $zip } -TimeoutSec 30
+    } catch {
+        Write-Warning "$h — push failed: $($_.Exception.Message) (agent too old? bootstrap it over SSH once)"
+        $failed += $h; continue
+    }
+    if (-not $resp.ok) { Write-Warning "$h — Pi rejected the update"; $failed += $h; continue }
 
-    scp -r (Join-Path $agentDir "main.py") (Join-Path $agentDir "static") "${User}@${h}:/tmp/agent-push/"
-    if ($LASTEXITCODE -ne 0) { Write-Warning "$h — copy failed (Pi off? wrong address?)"; $failed += $h; continue }
-
-    ssh "${User}@${h}" "mv /tmp/agent-push/main.py ~/pi-signage/agent/main.py && cp -r /tmp/agent-push/static/. ~/pi-signage/agent/static/ && rm -rf /tmp/agent-push && sudo systemctl restart signage-agent && systemctl --user restart pisignage-kiosk"
-    if ($LASTEXITCODE -ne 0) { Write-Warning "$h — install/restart failed"; $failed += $h; continue }
-
-    Write-Host "$h — done (TV will blink once as the kiosk reloads)"
+    # agent restarts itself now — wait for it to come back with the new version
+    $back = $false
+    foreach ($i in 1..60) {
+        Start-Sleep 1
+        try {
+            $st = Invoke-RestMethod "$base/api/status" -TimeoutSec 3
+            if ($st.agent_version -eq $expected) { $back = $true; break }
+        } catch { }  # still restarting
+    }
+    if ($back) { Write-Host "$h — updated to $expected (TV will blink once)" }
+    else { Write-Warning "$h — pushed, but agent didn't come back within 60s"; $failed += $h }
 }
+Remove-Item $staging, $zip -Recurse -Force -ErrorAction SilentlyContinue
 
 if ($failed) { Write-Warning "Failed: $($failed -join ', ')"; exit 1 }
-Write-Host "`nAll Pis updated."
+Write-Host "`nAll Pis updated to $expected."

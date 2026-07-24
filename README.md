@@ -28,6 +28,9 @@ the VM's address (e.g. `localhost:8080` for WSL) and click **Connect**. Note:
 **Scan network** (mDNS) won't see through WSL2's NAT — that button gets its
 real test when the Pi is on your actual WiFi.
 
+The app carries the Pi software inside it. When a connected Pi is out of date,
+an **Update Pi software** button appears and updates every reachable Pi.
+
 
 ## Try it today (WSL / Linux VM / any Linux box)
 
@@ -71,12 +74,15 @@ curl -X POST http://localhost:8080/api/show-now -H "Content-Type: application/js
 | DELETE | `/api/media/{name}` | Delete (refuses if in playlist) |
 | POST/DELETE | `/api/show-now` | Interrupt override / clear it |
 | POST | `/api/next` | Skip to next item |
+| POST | `/api/update` | Push a software update (zip of main.py + static) |
 | WS | `/ws` | Kiosk page live channel |
 
 Discovery: the agent advertises `_pisign._tcp.local` over mDNS with its name and
 port — the Windows app browses for that service type to find Pis on the LAN.
 
 ## Install on the real Pi (Raspberry Pi OS **Bookworm, Desktop** image)
+
+**Initial setup** (once per Pi):
 
 ```bash
 # from your PC:
@@ -88,6 +94,18 @@ cd ~/pi-signage/pi-setup && bash install.sh && sudo reboot
 The installer sets up: the agent as a systemd service (auto-restart), Chromium
 kiosk on boot (auto-relaunch if it crashes), screen blanking off, desktop
 autologin.
+
+**Updates after initial deploy:**
+
+Use `deploy-agent.ps1` (from your Windows PC) to push updates over HTTP to `/api/update`:
+
+```powershell
+.\deploy-agent.ps1                    # every Pi saved in the control app
+.\deploy-agent.ps1 -Hosts 192.168.0.58, pisignage2.local
+```
+
+This updates the agent without SSH. Omit `-Hosts` to update every saved Pi; specify addresses to update only those (add `-Port` if an agent isn't on the default 8080). **Note:** Changes to `venv/requirements.txt`
+and pre-`/api/update` agents still require manual SSH deployment.
 
 ## Pre-imaging a unit for USB WiFi setup (builder)
 
@@ -106,4 +124,6 @@ PC. The customer uses the app's **Add a Pi** wizard: plug in the Pi with a USB-C
   directly via the DevTools protocol so any site works.
 - Videos are muted (browser autoplay rules) and loop within their duration.
 - No auth on the API yet — fine on a home/office LAN, add a token in phase 2.
+  `/api/update` accepts agent code from anyone on the LAN; phase-2 API token
+  authentication must cover this endpoint.
 - The kiosk page reloads itself nightly at 03:30 to keep Chromium's memory flat.
