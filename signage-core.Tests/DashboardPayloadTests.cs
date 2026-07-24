@@ -42,4 +42,19 @@ public class DashboardPayloadTests
         Assert.Equal("paused", t.GetProperty("state").GetString());
         Assert.Equal(843, t.GetProperty("remaining").GetInt32());
     }
+
+    [Fact]
+    public void BuildTimerOnlyOmitsViewDataAndCarriesTimerFields()
+    {
+        var timer = new RoundTimer(); timer.Start(25, "Round 3", 3);
+        var json = JsonSerializer.Serialize(DashboardPayload.BuildTimerOnly(timer));
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        Assert.False(root.TryGetProperty("view_data", out _));
+        var t = root.GetProperty("timer");
+        Assert.Equal("running", t.GetProperty("state").GetString());
+        Assert.Equal(1500, t.GetProperty("remaining").GetInt32());
+        Assert.Equal(3, t.GetProperty("round").GetInt32());
+        Assert.Equal("Round 3", t.GetProperty("label").GetString());
+    }
 }

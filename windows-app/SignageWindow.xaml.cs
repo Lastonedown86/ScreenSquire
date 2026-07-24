@@ -19,6 +19,7 @@ public partial class SignageWindow : Window
     readonly DispatcherTimer _clockTick;
     int _pausedRemaining;     // seconds left while paused (app-side truth)
     bool _timeUpFired;        // one alert per round
+    bool _timerPostInFlight;  // guards Pause/Extend against a double-click race
 
     sealed class TvChoice
     {
@@ -118,7 +119,7 @@ public partial class SignageWindow : Window
         try
         {
             var snap = await _client.GetDashboardAsync(first.BaseUrl);
-            if (snap is null) { Status.Text = "Nothing on the device yet"; return; }
+            if (snap is null) { Status.Text = "Nothing on the TV yet"; return; }
 
             _state.Boards.Clear();
             foreach (var kv in snap.view_data.boards) _state.Boards[kv.Key] = kv.Value;
@@ -129,17 +130,28 @@ public partial class SignageWindow : Window
                 _endsAtLocal = DateTimeOffset.FromUnixTimeMilliseconds(ends).UtcDateTime;
                 if (snap.timer.round is { } rd) TxtRound.Text = rd.ToString();
             }
+            else if (snap.timer.state == "paused" && snap.timer.remaining is { } prem)
+            {
+                _pausedRemaining = prem;
+                _timer.Pause(prem);
+                if (snap.timer.round is { } prd) { TxtRound.Text = prd.ToString(); }
+                _endsAtLocal = null;
+                BtnPause.Content = "_Resume";
+            }
             else { _timer.Stop(); _endsAtLocal = null; }
             UpdateClock();
 
             await PreviewSlot();   // show the currently-selected slot's board
 
             int n = _state.Boards.Count;
-            Status.Text = (n > 0 || _endsAtLocal is not null)
-                ? $"Restored from device ({n} board{(n == 1 ? "" : "s")}{(_endsAtLocal is not null ? ", timer running" : "")})"
-                : "Nothing on the device yet";
+            bool timerRunning = _endsAtLocal is not null;
+            bool timerPaused = _timer.State == PiSignage.Signage.TimerRunState.Paused;
+            string timerNote = timerRunning ? ", timer running" : timerPaused ? ", timer paused" : "";
+            Status.Text = (n > 0 || timerRunning || timerPaused)
+                ? $"Restored from the TV ({n} board{(n == 1 ? "" : "s")}{timerNote})"
+                : "Nothing on the TV yet";
         }
-        catch { Status.Text = "Device not reachable — nothing restored"; }
+        catch { Status.Text = "TV not reachable — nothing restored"; }
         finally { SetBusy(false); }
     }
 
@@ -188,7 +200,7 @@ public partial class SignageWindow : Window
     void UpdateClock()
     {
         BtnPause.IsEnabled = BtnExtend.IsEnabled =
-            _timer.State != PiSignage.Signage.TimerRunState.Stopped && Targets.Any();
+            _timer.State != PiSignage.Signage.TimerRunState.Stopped && Targets.Any() && !_timerPostInFlight;
 
         if (_timer.State == PiSignage.Signage.TimerRunState.Paused)
         {
@@ -347,24 +359,26 @@ public partial class SignageWindow : Window
     {
         if (!Targets.Any()) { Status.Text = "Tick at least one TV above."; return null; }
         var display = SlotDisplay;   // capture before the async work — client-facing text uses this, not the slug
+        var slot = Slot;             // ditto: Slot is live off the combo box, snapshot it before awaits reorder under the user
         SetBusy(true);
         try
         {
             var png = ScreenCapture.CaptureRegion(r.x, r.y, r.w, r.h);
             ShowPreview(png);
-            var name = $"{Slot}-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}.png";
+            var name = $"{slot}-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}.png";
             Status.Text = $"Sending {display} to your TVs…";
             var result = await MultiPush.RunAsync(Targets, async t =>
             {
                 var path = await _client.UploadMediaAsync(t.BaseUrl, name, png);
-                _state.Boards[Slot] = path;
+                _state.Boards[slot] = path;
                 await _client.PostDashboardAsync(t.BaseUrl, DashboardPayload.Build(_state, _timer));
             });
             Status.Text = result.Summary();
-            Toaster.Show(result.Summary(), result.AllFailed ? ToastKind.Error : ToastKind.Success);
+            Toaster.Show(result.Summary(),
+                result.AllFailed ? ToastKind.Error : result.Failed.Count > 0 ? ToastKind.Warning : ToastKind.Success);
             if (!result.AllFailed)
             {
-                App.Settings.Regions[Slot] = new PiSignage.Signage.RegionRect { X = r.x, Y = r.y, W = r.w, H = r.h };
+                App.Settings.Regions[slot] = new PiSignage.Signage.RegionRect { X = r.x, Y = r.y, W = r.w, H = r.h };
                 App.SaveSettings();
             }
             return result;
@@ -372,9 +386,11 @@ public partial class SignageWindow : Window
         finally { SetBusy(false); }
     }
 
+    // Timer-only fan-out: no view_data, so a TV that never got an upload keeps
+    // whatever boards it already has instead of the sender re-advertising its own.
     async Task<MultiPushResult> FanOutDashboard()
         => await MultiPush.RunAsync(Targets, t =>
-               _client.PostDashboardAsync(t.BaseUrl, DashboardPayload.Build(_state, _timer)));
+               _client.PostDashboardAsync(t.BaseUrl, DashboardPayload.BuildTimerOnly(_timer)));
 
     async Task<bool> Post(string msg)
     {
@@ -382,7 +398,7 @@ public partial class SignageWindow : Window
         var result = await FanOutDashboard();
         Status.Text = result.Failed.Count == 0 ? msg : result.Summary();
         if (result.Failed.Count > 0)
-            Toaster.Show(result.Summary(), result.AllFailed ? ToastKind.Error : ToastKind.Info);
+            Toaster.Show(result.Summary(), result.AllFailed ? ToastKind.Error : ToastKind.Warning);
         return !result.AllFailed;
     }
 
@@ -413,6 +429,7 @@ public partial class SignageWindow : Window
 
     async Task<bool> StartRound(int min, int round)
     {
+        if (!Targets.Any()) { Status.Text = "Tick at least one TV above."; return false; }
         _timer.Start(min, $"Round {round}", round);
         _endsAtLocal = DateTime.UtcNow.AddSeconds(min * 60);
         _timerEditPending = false; _timeUpFired = false;
@@ -438,48 +455,61 @@ public partial class SignageWindow : Window
 
     async void PauseResume_Click(object s, RoutedEventArgs e)
     {
-        if (_timer.State == PiSignage.Signage.TimerRunState.Running && _endsAtLocal is { } end)
+        if (_timerPostInFlight) return;
+        _timerPostInFlight = true;
+        try
         {
-            _pausedRemaining = Math.Max(0, (int)Math.Round((end - DateTime.UtcNow).TotalSeconds));
-            _timer.Pause(_pausedRemaining);
-            _endsAtLocal = null;
-            BtnPause.Content = "_Resume";
-            UpdateClock();
-            if (await Post("Timer paused"))
-                Toaster.Show("Round clock paused — click Resume when you're ready.", ToastKind.Success);
+            if (_timer.State == PiSignage.Signage.TimerRunState.Running && _endsAtLocal is { } end)
+            {
+                _pausedRemaining = Math.Max(0, (int)Math.Round((end - DateTime.UtcNow).TotalSeconds));
+                _timer.Pause(_pausedRemaining);
+                _endsAtLocal = null;
+                BtnPause.Content = "_Resume";
+                UpdateClock();
+                if (await Post("Timer paused"))
+                    Toaster.Show("Round clock paused — click Resume when you're ready.", ToastKind.Success);
+            }
+            else if (_timer.State == PiSignage.Signage.TimerRunState.Paused)
+            {
+                _timer.Resume(_pausedRemaining);
+                _endsAtLocal = DateTime.UtcNow.AddSeconds(_pausedRemaining);
+                BtnPause.Content = "_Pause";
+                UpdateClock();
+                if (await Post("Timer resumed"))
+                    Toaster.Show("Round clock running again.", ToastKind.Success);
+            }
         }
-        else if (_timer.State == PiSignage.Signage.TimerRunState.Paused)
-        {
-            _timer.Resume(_pausedRemaining);
-            _endsAtLocal = DateTime.UtcNow.AddSeconds(_pausedRemaining);
-            BtnPause.Content = "_Pause";
-            UpdateClock();
-            if (await Post("Timer resumed"))
-                Toaster.Show("Round clock running again.", ToastKind.Success);
-        }
+        finally { _timerPostInFlight = false; }
     }
 
     async void Extend_Click(object s, RoutedEventArgs e)
     {
-        if (_timer.State == PiSignage.Signage.TimerRunState.Running && _endsAtLocal is { } end)
+        if (_timerPostInFlight) return;
+        _timerPostInFlight = true;
+        try
         {
-            var rem = Math.Max(0, (int)Math.Round((end - DateTime.UtcNow).TotalSeconds)) + 300;
-            _timer.Resume(rem);                      // still running, new remaining
-            _endsAtLocal = DateTime.UtcNow.AddSeconds(rem);
-            _timeUpFired = false;
-            UpdateClock();
-            if (await Post("Added 5 minutes"))
-                Toaster.Show("Added 5 minutes to the round clock.", ToastKind.Success);
+            if (_timer.State == PiSignage.Signage.TimerRunState.Running && _endsAtLocal is { } end)
+            {
+                var rem = Math.Max(0, (int)Math.Round((end - DateTime.UtcNow).TotalSeconds)) + 300;
+                if (rem == _timer.RemainingSeconds) rem += 1;  // dodge the agent's same-timer check so +5 always re-anchors
+                _timer.Resume(rem);                      // still running, new remaining
+                _endsAtLocal = DateTime.UtcNow.AddSeconds(rem);
+                _timeUpFired = false;
+                UpdateClock();
+                if (await Post("Added 5 minutes"))
+                    Toaster.Show("Added 5 minutes to the round clock.", ToastKind.Success);
+            }
+            else if (_timer.State == PiSignage.Signage.TimerRunState.Paused)
+            {
+                _pausedRemaining += 300;
+                _timer.Pause(_pausedRemaining);
+                _timeUpFired = false;
+                UpdateClock();
+                if (await Post("Added 5 minutes"))
+                    Toaster.Show("Added 5 minutes to the round clock.", ToastKind.Success);
+            }
         }
-        else if (_timer.State == PiSignage.Signage.TimerRunState.Paused)
-        {
-            _pausedRemaining += 300;
-            _timer.Pause(_pausedRemaining);
-            _timeUpFired = false;
-            UpdateClock();
-            if (await Post("Added 5 minutes"))
-                Toaster.Show("Added 5 minutes to the round clock.", ToastKind.Success);
-        }
+        finally { _timerPostInFlight = false; }
     }
 
     async void StopTimer_Click(object s, RoutedEventArgs e)
@@ -514,7 +544,7 @@ public partial class SignageWindow : Window
         Toaster.Show(result.AllFailed
             ? "Couldn't pin it on any TV: " + result.Summary(verb: "pinned")
             : $"The {display} are pinned — {result.Summary(verb: "pinned")} Click 'Back to playlist' when the event is over.",
-            result.AllFailed ? ToastKind.Error : ToastKind.Success);
+            result.AllFailed ? ToastKind.Error : result.Failed.Count > 0 ? ToastKind.Warning : ToastKind.Success);
     }
 
     async void BackToPlaylist_Click(object s, RoutedEventArgs e)
@@ -527,8 +557,8 @@ public partial class SignageWindow : Window
         });
         Toaster.Show(result.AllFailed
             ? "Couldn't switch any TV back: " + result.Summary(verb: "switched back")
-            : result.Summary(verb: "switched back to its playlist"),
-            result.AllFailed ? ToastKind.Error : ToastKind.Success);
+            : result.Summary(verb: "switched back to the normal playlist"),
+            result.AllFailed ? ToastKind.Error : result.Failed.Count > 0 ? ToastKind.Warning : ToastKind.Success);
     }
 
     // The kiosk browser runs ON the Pi, so it reaches its own agent via localhost.
