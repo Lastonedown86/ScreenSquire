@@ -31,4 +31,15 @@ public class DashboardPayloadTests
         Assert.Equal("stopped", timer.GetProperty("state").GetString());
         Assert.Equal(JsonValueKind.Null, timer.GetProperty("remaining").ValueKind);
     }
+
+    [Fact]
+    public void PausedTimerSerializesStateAndRemaining()
+    {
+        var timer = new RoundTimer(); timer.Start(25, "Round 3", 3); timer.Pause(843);
+        var json = JsonSerializer.Serialize(DashboardPayload.Build(new DashboardState(), timer));
+        using var doc = JsonDocument.Parse(json);
+        var t = doc.RootElement.GetProperty("timer");
+        Assert.Equal("paused", t.GetProperty("state").GetString());
+        Assert.Equal(843, t.GetProperty("remaining").GetInt32());
+    }
 }
