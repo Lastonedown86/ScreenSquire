@@ -344,7 +344,8 @@ async def get_dashboard():
 
 @app.get("/dashboard")
 async def dashboard_page():
-    return FileResponse(APP_DIR / "static" / "dashboard.html")
+    return FileResponse(APP_DIR / "static" / "dashboard.html",
+                        headers={"Cache-Control": "no-store"})
 
 
 # ---- WiFi provisioning (USB setup) ----
