@@ -11,10 +11,21 @@
         <ProgressBar x:Name="Busy" DockPanel.Dock="Top" Height="4" IsIndeterminate="True"
                      Visibility="Collapsed"/>
         <StackPanel DockPanel.Dock="Top" Margin="14,14,14,0">
-            <TextBlock Text="1. Choose your Pi" FontWeight="SemiBold"/>
-            <ComboBox x:Name="CmbAgent" IsEditable="True" DisplayMemberPath="Name"
-                      IsTextSearchEnabled="False" Margin="0,2,0,10"
-                      ToolTip="The Pi whose TV should show the captures and timer"/>
+            <TextBlock Text="1. Tick the TVs to send to" FontWeight="SemiBold"/>
+            <ItemsControl x:Name="TvList" Margin="0,2,0,2">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <CheckBox Content="{Binding Device.Name}" IsChecked="{Binding Checked, Mode=TwoWay}"
+                                  Margin="0,0,14,4" Checked="Tv_CheckChanged" Unchecked="Tv_CheckChanged"
+                                  ToolTip="Send captures and the round timer to this TV"/>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <TextBlock x:Name="NoTvHint" Text="Tick at least one TV above."
+                       Foreground="{StaticResource Warning}" Margin="0,0,0,8" Visibility="Collapsed"/>
 
             <TextBlock Text="2. Round timer" FontWeight="SemiBold"/>
             <StackPanel Orientation="Horizontal" Margin="0,2,0,0" VerticalAlignment="Center">
@@ -49,16 +60,16 @@
             </ComboBox>
 
             <StackPanel Orientation="Horizontal">
-                <Button Content="_Capture region…" Click="Capture_Click" Padding="10,4"
+                <Button x:Name="BtnCapture" Content="_Capture region…" Click="Capture_Click" Padding="10,4"
                         ToolTip="Draw a box on your screen — that area is sent to the TV"/>
                 <Button x:Name="BtnRecapture" Content="_Re-capture" Click="Recapture_Click"
                         Padding="10,4" Margin="8,0,0,0" IsEnabled="False"
                         ToolTip="Grab the same area again (after the page on your screen updates)"
                         ToolTipService.ShowOnDisabled="True"/>
-                <Button Content="_Pin to TV" Click="PinBoardToTv_Click" Style="{StaticResource PrimaryButton}"
+                <Button x:Name="BtnPin" Content="_Pin to TV" Click="PinBoardToTv_Click" Style="{StaticResource PrimaryButton}"
                         Padding="10,4" Margin="8,0,0,0"
                         ToolTip="Show this board on the TV and keep it there — the round timer floats on top"/>
-                <Button Content="Bac_k to playlist" Click="BackToPlaylist_Click"
+                <Button x:Name="BtnBack" Content="Bac_k to playlist" Click="BackToPlaylist_Click"
                         Padding="10,4" Margin="8,0,0,0"
                         ToolTip="Unpin and let the TV go back to its normal playlist"/>
             </StackPanel>

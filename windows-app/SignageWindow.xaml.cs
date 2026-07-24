@@ -18,6 +18,16 @@ public partial class SignageWindow : Window
     DateTime? _endsAtLocal;                 // app-side countdown target (mirrors the TV)
     readonly DispatcherTimer _clockTick;
 
+    sealed class TvChoice
+    {
+        public PiSignage.Signage.SavedDevice Device { get; init; } = null!;
+        public bool Checked { get; set; }
+    }
+    List<TvChoice> _tvs = new();
+
+    IEnumerable<PushTarget> Targets => _tvs.Where(t => t.Checked)
+        .Select(t => new PushTarget(t.Device.Name, $"http://{t.Device.Ip}:8080"));
+
     public SignageWindow()
     {
         InitializeComponent();
@@ -29,7 +39,6 @@ public partial class SignageWindow : Window
         {
             this.ExcludeFromCapture();   // our window never appears in the screenshot
             var saved = new PiSignage.Signage.DeviceStore().Load();
-            CmbAgent.ItemsSource = saved;  // saved Pis to pick from
             RestoreSession(saved);
             HydrateFromDevice();         // restore what's already on the device
         };
@@ -39,29 +48,29 @@ public partial class SignageWindow : Window
         Closed += (_, _) => Owner?.Activate();
     }
 
-    // Called by MainWindow after a rename so the Target Pi list shows the new
-    // name immediately, keeping the same Pi selected.
+    // Called by MainWindow after a rename so the TV list shows the new
+    // name immediately, keeping the same TVs ticked.
     public void RefreshDevices()
     {
-        var keepHost = (CmbAgent.SelectedItem as PiSignage.Signage.SavedDevice)?.Hostname;
+        var keep = new HashSet<string>(_tvs.Where(t => t.Checked).Select(t => t.Device.Hostname),
+                                       StringComparer.OrdinalIgnoreCase);
         var saved = new PiSignage.Signage.DeviceStore().Load();
-        CmbAgent.ItemsSource = saved;
-        if (keepHost != null)
-            CmbAgent.SelectedItem = saved.FirstOrDefault(d =>
-                string.Equals(d.Hostname, keepHost, StringComparison.OrdinalIgnoreCase));
+        _tvs = saved.Select(d => new TvChoice { Device = d, Checked = keep.Contains(d.Hostname) }).ToList();
+        TvList.ItemsSource = _tvs;
+        UpdateActionButtons();
     }
 
-    // Reopen where the operator left off: same target Pi, timer default, and
+    // Reopen where the operator left off: same ticked TVs, timer default, and
     // capture region per slot (so Re-capture works without re-dragging).
     void RestoreSession(System.Collections.Generic.List<PiSignage.Signage.SavedDevice> saved)
     {
-        // last-used target > the Pi the main window is connected to > first saved Pi
-        var target = App.Settings.SignageTarget;
-        if (string.IsNullOrWhiteSpace(target)) target = App.Settings.LastDeviceHostname;
-        var dev = saved.FirstOrDefault(d => string.Equals(d.Hostname, target, StringComparison.OrdinalIgnoreCase))
-                  ?? saved.FirstOrDefault();
-        if (dev != null) CmbAgent.SelectedItem = dev;
-        else if (!string.IsNullOrWhiteSpace(target)) CmbAgent.Text = target;
+        var wanted = new HashSet<string>(App.Settings.SignageTargets, StringComparer.OrdinalIgnoreCase);
+        if (wanted.Count == 0 && !string.IsNullOrWhiteSpace(App.Settings.LastDeviceHostname))
+            wanted.Add(App.Settings.LastDeviceHostname!);
+        _tvs = saved.Select(d => new TvChoice { Device = d, Checked = wanted.Contains(d.Hostname) }).ToList();
+        if (_tvs.Count > 0 && !_tvs.Any(t => t.Checked)) _tvs[0].Checked = true;  // sane default: first TV
+        TvList.ItemsSource = _tvs;
+        UpdateActionButtons();
         TxtMinutes.Text = App.Settings.TimerMinutes.ToString();
         foreach (var min in App.Settings.TimerPresets.Distinct().Where(m => m > 0))
         {
@@ -94,8 +103,7 @@ public partial class SignageWindow : Window
 
     void SaveSession()
     {
-        App.Settings.SignageTarget = CmbAgent.SelectedItem is PiSignage.Signage.SavedDevice d
-            ? d.Hostname : CmbAgent.Text.Trim();
+        App.Settings.SignageTargets = _tvs.Where(t => t.Checked).Select(t => t.Device.Hostname).ToList();
         App.SaveSettings();
     }
 
@@ -105,11 +113,13 @@ public partial class SignageWindow : Window
 
     async void HydrateFromDevice()
     {
+        var first = Targets.FirstOrDefault();
+        if (first is null) { Status.Text = "Tick at least one TV above."; return; }
         SetBusy(true);
-        Status.Text = "Loading from device…";
+        Status.Text = "Loading from " + first.Name + "…";
         try
         {
-            var snap = await _client.GetDashboardAsync(Base);
+            var snap = await _client.GetDashboardAsync(first.BaseUrl);
             if (snap is null) { Status.Text = "Nothing on the device yet"; return; }
 
             _state.Boards.Clear();
@@ -137,13 +147,14 @@ public partial class SignageWindow : Window
 
     async Task PreviewSlot()
     {
-        if (_state.Boards.TryGetValue(Slot, out var path))
+        var first = Targets.FirstOrDefault();
+        if (first is not null && _state.Boards.TryGetValue(Slot, out var path))
         {
             PreviewEmpty.Visibility = Visibility.Collapsed;
             PreviewBusy.Visibility = Visibility.Visible;     // spinner while fetching this slot's image
             try
             {
-                var fetch = _client.GetMediaAsync(Base, path);
+                var fetch = _client.GetMediaAsync(first.BaseUrl, path);
                 await Task.WhenAll(fetch, Task.Delay(300));  // keep the spinner visible even on an instant (localhost) fetch
                 ShowPreview(await fetch);
                 return;
@@ -203,12 +214,17 @@ public partial class SignageWindow : Window
     }
 
     string Slot => ((ComboBoxItem)CmbSlot.SelectedItem).Content!.ToString()!;
-    // Target from the picked saved device (Ip:8080), else the typed host[:port].
-    string Base => CmbAgent.SelectedItem is PiSignage.Signage.SavedDevice d
-        ? "http://" + d.Ip + ":8080"
-        : "http://" + CmbAgent.Text.Trim();
 
-    string TargetLabel => CmbAgent.SelectedItem is PiSignage.Signage.SavedDevice d ? d.Name : CmbAgent.Text.Trim();
+    void Tv_CheckChanged(object s, RoutedEventArgs e) => UpdateActionButtons();
+
+    void UpdateActionButtons()
+    {
+        bool any = Targets.Any();
+        NoTvHint.Visibility = any ? Visibility.Collapsed : Visibility.Visible;
+        BtnStart.IsEnabled = BtnStop.IsEnabled = any;
+        BtnRecapture.IsEnabled = any && _lastRegion is not null;
+        BtnCapture.IsEnabled = BtnPin.IsEnabled = BtnBack.IsEnabled = any;
+    }
 
     async void Capture_Click(object s, RoutedEventArgs e)
     {
@@ -229,30 +245,44 @@ public partial class SignageWindow : Window
         if (_lastRegion is { } r) await CaptureAndPush(r);
     }
 
+    // One capture -> every checked TV. Upload the PNG then post the dashboard per TV.
     async Task CaptureAndPush((int x, int y, int w, int h) r)
     {
-        // No hide/opacity/delay: the window is excluded from capture, so we grab
-        // instantly and the app stays put (no blink, no z-order change).
         SetBusy(true);
         try
         {
             var png = ScreenCapture.CaptureRegion(r.x, r.y, r.w, r.h);
-            ShowPreview(png);            // let the operator see exactly what was grabbed
-            var name = $"{Slot}-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}.png";   // globally-unique -> cache-bust
-            Status.Text = $"Pushing {Slot}…";
-            var path = await _client.UploadMediaAsync(Base, name, png);
-            _state.Boards[Slot] = path;
-            await _client.PostDashboardAsync(Base, DashboardPayload.Build(_state, _timer));
-            Status.Text = $"Pushed {Slot} → {TargetLabel}";
-            App.Settings.Regions[Slot] = new PiSignage.Signage.RegionRect { X = r.x, Y = r.y, W = r.w, H = r.h };
-            App.SaveSettings();
-        }
-        catch (Exception ex)
-        {
-            Status.Text = "Push failed: " + ex.Message;
-            Toaster.Show("Couldn't send the capture to the TV: " + ex.Message, ToastKind.Error);
+            ShowPreview(png);
+            var name = $"{Slot}-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}.png";
+            Status.Text = $"Sending {Slot} to your TVs…";
+            var result = await MultiPush.RunAsync(Targets, async t =>
+            {
+                var path = await _client.UploadMediaAsync(t.BaseUrl, name, png);
+                _state.Boards[Slot] = path;
+                await _client.PostDashboardAsync(t.BaseUrl, DashboardPayload.Build(_state, _timer));
+            });
+            Status.Text = result.Summary();
+            Toaster.Show(result.Summary(), result.AllFailed ? ToastKind.Error : ToastKind.Success);
+            if (!result.AllFailed)
+            {
+                App.Settings.Regions[Slot] = new PiSignage.Signage.RegionRect { X = r.x, Y = r.y, W = r.w, H = r.h };
+                App.SaveSettings();
+            }
         }
         finally { SetBusy(false); }
+    }
+
+    async Task<MultiPushResult> FanOutDashboard()
+        => await MultiPush.RunAsync(Targets, t =>
+               _client.PostDashboardAsync(t.BaseUrl, DashboardPayload.Build(_state, _timer)));
+
+    async Task<bool> Post(string msg)
+    {
+        var result = await FanOutDashboard();
+        Status.Text = result.Failed.Count == 0 ? msg : result.Summary();
+        if (result.Failed.Count > 0)
+            Toaster.Show(result.Summary(), result.AllFailed ? ToastKind.Error : ToastKind.Info);
+        return !result.AllFailed;
     }
 
     void ShowPreview(byte[] png)
@@ -318,55 +348,33 @@ public partial class SignageWindow : Window
     // rides on top via the kiosk's corner overlay, so nothing rotates.
     async void PinBoardToTv_Click(object s, RoutedEventArgs e)
     {
-        try
+        var slot = Slot;
+        var result = await MultiPush.RunAsync(Targets, async t =>
         {
-            using var api = ApiFromBase();
-            await api.ShowNowAsync(new ShowNowRequest { Type = "url", Source = BoardPageUrl(Slot), Duration = null });
-            Toaster.Show($"The {Slot} are pinned on the TV — the timer floats on top while a round runs. Click 'Back to playlist' when the event is over.", ToastKind.Success);
-        }
-        catch (Exception ex)
-        {
-            Toaster.Show("Couldn't pin it on the TV: " + ex.Message, ToastKind.Error);
-        }
+            var u = new Uri(t.BaseUrl);
+            using var api = new ApiClient(u.Host, u.Port);
+            await api.ShowNowAsync(new ShowNowRequest { Type = "url", Source = BoardPageUrl(slot), Duration = null });
+        });
+        Toaster.Show(result.AllFailed
+            ? "Couldn't pin it on any TV: " + result.Summary(verb: "pinned")
+            : $"The {slot} are pinned — {result.Summary(verb: "pinned")} Click 'Back to playlist' when the event is over.",
+            result.AllFailed ? ToastKind.Error : ToastKind.Success);
     }
 
     async void BackToPlaylist_Click(object s, RoutedEventArgs e)
     {
-        try
+        var result = await MultiPush.RunAsync(Targets, async t =>
         {
-            using var api = ApiFromBase();
+            var u = new Uri(t.BaseUrl);
+            using var api = new ApiClient(u.Host, u.Port);
             await api.ClearShowNowAsync();
-            Toaster.Show("The TV is back on its normal playlist.", ToastKind.Success);
-        }
-        catch (Exception ex)
-        {
-            Toaster.Show("Couldn't switch the TV back: " + ex.Message, ToastKind.Error);
-        }
+        });
+        Toaster.Show(result.AllFailed
+            ? "Couldn't switch any TV back: " + result.Summary(verb: "switched back")
+            : result.Summary(verb: "switched back to its playlist"),
+            result.AllFailed ? ToastKind.Error : ToastKind.Success);
     }
 
     // The kiosk browser runs ON the Pi, so it reaches its own agent via localhost.
     static string BoardPageUrl(string slot) => $"http://localhost:8080/dashboard?view=board&name={slot}";
-
-    ApiClient ApiFromBase()
-    {
-        var u = new Uri(Base);
-        return new ApiClient(u.Host, u.Port);
-    }
-
-
-    async Task<bool> Post(string msg)
-    {
-        try
-        {
-            await _client.PostDashboardAsync(Base, DashboardPayload.Build(_state, _timer));
-            Status.Text = msg;
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Status.Text = "Push failed: " + ex.Message;
-            Toaster.Show("Couldn't reach the Pi — the TV was not updated: " + ex.Message, ToastKind.Error);
-            return false;
-        }
-    }
 }
