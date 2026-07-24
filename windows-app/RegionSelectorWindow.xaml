@@ -1,13 +1,16 @@
 <Window x:Class="PiSignage.Control.RegionSelectorWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        WindowStyle="None" AllowsTransparency="True" Background="#33000000"
+        WindowStyle="None" AllowsTransparency="True" Background="{StaticResource OverlayScrim}"
         WindowState="Maximized" Topmost="True" Cursor="Cross"
         Title="Select region">
     <Canvas x:Name="Canvas">
-        <Rectangle x:Name="Sel" Stroke="#FF4DA3FF" StrokeThickness="2"
-                   Fill="#224DA3FF" Visibility="Collapsed"/>
-        <TextBlock Canvas.Left="20" Canvas.Top="20" Foreground="White"
-                   Text="Drag over the pairings table — Esc to cancel"/>
+        <Rectangle x:Name="Sel" Stroke="{StaticResource SelectionStroke}" StrokeThickness="2"
+                   Fill="{StaticResource SelectionFill}" Visibility="Collapsed"/>
+        <TextBlock x:Name="Hint" Canvas.Left="20" Canvas.Top="20" Foreground="White" FontSize="14"
+                   Text="Drag a box around the area you want on the TV — Esc to cancel"/>
+        <!-- live size readout, follows the selection -->
+        <TextBlock x:Name="Dims" Foreground="White" FontFamily="Consolas" FontSize="13"
+                   Visibility="Collapsed"/>
     </Canvas>
 </Window>

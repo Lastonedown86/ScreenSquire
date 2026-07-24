@@ -18,6 +18,7 @@ import json
 import logging
 import mimetypes
 import os
+import shutil
 import socket
 import time
 import uuid
@@ -121,7 +122,7 @@ class Hub:
     async def show(self, payload: dict) -> None:
         self.current = payload
         dead = []
-        for ws in self.clients:
+        for ws in list(self.clients):  # copy: a client may register mid-broadcast
             try:
                 await ws.send_json(payload)
             except Exception:
@@ -424,7 +425,9 @@ async def ws_endpoint(ws: WebSocket):
         while True:
             await ws.receive_text()  # kiosk pings; content unused for now
     except WebSocketDisconnect:
-        hub.unregister(ws)
+        pass
+    finally:
+        hub.unregister(ws)  # never leak a client, whatever killed the socket
 
 
 # ---- control API (used by the Windows app) ----
@@ -468,6 +471,9 @@ async def upload_media(file: UploadFile):
     ext = Path(name).suffix.lower()
     if ext not in ALLOWED_UPLOAD_EXT:
         raise HTTPException(400, f"Unsupported file type: {ext}")
+    # a full SD card kills the whole Pi — refuse uploads before that happens
+    if shutil.disk_usage(MEDIA_DIR).free < 500 * 1024 * 1024:
+        raise HTTPException(507, "Pi is low on disk space — delete media first")
     dest = MEDIA_DIR / name
     tmp = dest.with_suffix(dest.suffix + ".part")
     with tmp.open("wb") as out:

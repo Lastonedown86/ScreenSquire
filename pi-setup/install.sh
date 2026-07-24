@@ -81,7 +81,8 @@ while true; do
     --noerrdialogs --disable-infobars --disable-session-crashed-bubble --no-first-run \
     --disable-features=Translate --autoplay-policy=no-user-gesture-required \
     --check-for-update-interval=31536000 --overscroll-history-navigation=0 \
-    --enable-gpu-rasterization --ignore-gpu-blocklist $EXTFLAG
+    --enable-gpu-rasterization --ignore-gpu-blocklist \
+    --disk-cache-size=104857600 $EXTFLAG   # 100MB cache cap: protect the SD card
   sleep 2   # if Chromium ever crashes, relaunch it
 done
 EOF
@@ -119,6 +120,31 @@ RestartSec=2
 [Install]
 WantedBy=graphical-session.target
 EOF
+# ---- daily kiosk restart (04:00): clears renderer crashes ("Aw, Snap" keeps
+# the process alive so the crash-relaunch loop never fires) and memory creep ----
+cat > "$HOME_DIR/.config/systemd/user/pisignage-kiosk-restart.service" <<EOF
+[Unit]
+Description=Restart PiSignage kiosk (daily hygiene)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl --user try-restart pisignage-kiosk.service
+EOF
+cat > "$HOME_DIR/.config/systemd/user/pisignage-kiosk-restart.timer" <<EOF
+[Unit]
+Description=Daily PiSignage kiosk restart
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+
+[Install]
+WantedBy=timers.target
+EOF
+# enable by symlink — works even when the user bus isn't up during install
+mkdir -p "$HOME_DIR/.config/systemd/user/timers.target.wants"
+ln -sf ../pisignage-kiosk-restart.timer \
+  "$HOME_DIR/.config/systemd/user/timers.target.wants/pisignage-kiosk-restart.timer"
+
 # keep the user manager alive so the agent can reach it (systemctl --user)
 sudo loginctl enable-linger "$USER_NAME" || true
 
@@ -142,6 +168,16 @@ X-GNOME-Autostart-enabled=true
 EOF
 
 # ---------------------------------------------------------------- polish
+# cap the journal so logs can never fill the SD card
+sudo mkdir -p /etc/systemd/journald.conf.d
+printf '[Journal]\nSystemMaxUse=64M\n' | sudo tee /etc/systemd/journald.conf.d/pisignage.conf >/dev/null
+sudo systemctl restart systemd-journald || true
+
+# hardware watchdog: if the kernel ever hard-hangs, the Pi reboots itself in
+# ~15s instead of showing a frozen sign until someone pulls the plug
+sudo mkdir -p /etc/systemd/system.conf.d
+printf '[Manager]\nRuntimeWatchdogSec=15\n' | sudo tee /etc/systemd/system.conf.d/pisignage-watchdog.conf >/dev/null
+
 # never blank the screen
 sudo raspi-config nonint do_blanking 1 || true
 # boot to desktop with autologin (kiosk needs a session)

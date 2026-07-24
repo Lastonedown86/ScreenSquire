@@ -85,7 +85,6 @@
     back.appendChild(el);
   }
 
-  let swapped = false;
   function swap(back) {
     if (back.classList.contains('visible')) return;
     const old = layers[front];
@@ -112,10 +111,13 @@
   setInterval(() => { if (ws && ws.readyState === 1) ws.send('ping'); }, 20000);
 
   // if the page has been up for a very long time, a nightly reload keeps
-  // Chromium's memory in check (03:30 local)
+  // Chromium's memory in check (03:30 local). Only reload while connected —
+  // reloading with the agent down would land on an error page with no JS to
+  // ever recover from it.
   setInterval(() => {
     const d = new Date();
-    if (d.getHours() === 3 && d.getMinutes() === 30) location.reload();
+    if (d.getHours() === 3 && d.getMinutes() === 30
+        && ws && ws.readyState === 1) location.reload();
   }, 60000);
 })();
 </script>

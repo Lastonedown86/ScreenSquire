@@ -63,8 +63,7 @@ public partial class MainWindow : Window
         var status = await ConnectHostAsync(addr, port);
         if (status == null)
         {
-            MessageBox.Show(this, $"Could not reach the Pi at {addr}:{port}.",
-                "Connection failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+            Toaster.Show($"Could not reach the Pi at {addr}:{port}. Check it's plugged in and on the same WiFi.", ToastKind.Error);
             return;
         }
         if (!string.IsNullOrWhiteSpace(status.Name))
@@ -93,8 +92,7 @@ public partial class MainWindow : Window
             }
         }
         if (status == null)
-            MessageBox.Show(this, $"Couldn't reach {dev.Name}. Try Scan network.",
-                "Not found", MessageBoxButton.OK, MessageBoxImage.Warning);
+            Toaster.Show($"Couldn't reach {dev.Name}. Check it's powered on, then click Find my Pi.", ToastKind.Error);
     }
 
     // Core connect: returns StatusInfo on success (and wires up the UI), else null.
@@ -124,7 +122,7 @@ public partial class MainWindow : Window
             MainArea.IsEnabled = false;
             _connectedHost = null;
             BtnKiosk.IsEnabled = BtnRemote.IsEnabled = false;
-            BtnKiosk.Content = "Kiosk on/off";
+            BtnKiosk.Content = "_TV display on/off";
             LblStatus.Text = "Not connected";
             return null;
         }
@@ -144,15 +142,26 @@ public partial class MainWindow : Window
         if (e.Key == System.Windows.Input.Key.Enter) BtnConnect_Click(sender, e);
     }
 
+    private void Window_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.S &&
+            System.Windows.Input.Keyboard.Modifiers == System.Windows.Input.ModifierKeys.Control &&
+            _dirty && MainArea.IsEnabled)
+        {
+            BtnSavePlaylist_Click(sender, e);
+            e.Handled = true;
+        }
+    }
+
     // Reject non-digit typing in numeric fields (durations/seconds/minutes).
     private void NumberOnly_PreviewTextInput(object sender, System.Windows.Input.TextCompositionEventArgs e)
         => e.Handled = !e.Text.All(char.IsDigit);
 
     private async Task RefreshKioskLabelAsync()
     {
-        if (_api == null) { BtnKiosk.Content = "Kiosk on/off"; return; }
-        try { var st = await _api.GetKioskAsync(); BtnKiosk.Content = (st?.Running ?? false) ? "Kiosk: On" : "Kiosk: Off"; }
-        catch { BtnKiosk.Content = "Kiosk on/off"; }
+        if (_api == null) { BtnKiosk.Content = "_TV display on/off"; return; }
+        try { var st = await _api.GetKioskAsync(); BtnKiosk.Content = (st?.Running ?? false) ? "_TV display: On" : "_TV display: Off"; }
+        catch { BtnKiosk.Content = "_TV display on/off"; }
     }
 
     // Scan mDNS, GET /api/status on each, return the IP whose Pi name matches.
@@ -190,7 +199,7 @@ public partial class MainWindow : Window
     private void BtnForget_Click(object sender, RoutedEventArgs e)
     {
         if (CmbAddress.SelectedItem is not PiSignage.Signage.SavedDevice dev) return;
-        if (MessageBox.Show(this, $"Forget {dev.Name}?", "Confirm",
+        if (MessageBox.Show(this, $"Remove {dev.Name} from your device list?\n\nYou can always add it back with 'Find my Pi'.", "Remove device",
                 MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
         _devices.Remove(dev);
         SaveDevices();
@@ -212,28 +221,27 @@ public partial class MainWindow : Window
     {
         if (_api == null)
         {
-            MessageBox.Show(this, "Connect to a Pi first.", "Kiosk", MessageBoxButton.OK, MessageBoxImage.Information);
+            Toaster.Show("Connect to your Pi first — pick it at the top and click Connect.");
             return;
         }
         try
         {
             var st = await _api.GetKioskAsync();
             bool running = st?.Running ?? false;
-            if (running &&   // turning the kiosk OFF stops the live TV — confirm
-                MessageBox.Show(this, "Turn the kiosk off? The TV will drop to the desktop (signage stops).",
-                    "Kiosk off", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+            if (running &&   // turning the display OFF stops the live TV — confirm
+                MessageBox.Show(this, "This turns off the signage on the TV and shows the Pi's desktop instead.\n\nTurn the TV display off?",
+                    "TV display off", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
                 return;
             bool ok = await _api.SetKioskAsync(!running);
-            if (!ok) { LblStatus.Text = "Kiosk toggle failed"; return; }
-            LblStatus.Text = running
-                ? "Kiosk stopped — the Pi's desktop is now controllable via Remote control"
-                : "Kiosk started — signage is back on";
+            if (!ok) { Toaster.Show("Couldn't switch the TV display — try again.", ToastKind.Error); return; }
+            Toaster.Show(running
+                ? "TV display is off — use 'View Pi screen' to control the Pi's desktop."
+                : "TV display is on — your signage is playing again.", ToastKind.Success);
             await RefreshKioskLabelAsync();
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, "Kiosk toggle failed: " + ex.Message, "Kiosk",
-                MessageBoxButton.OK, MessageBoxImage.Warning);
+            Toaster.Show("Couldn't switch the TV display: " + ex.Message, ToastKind.Error);
         }
     }
 
@@ -242,8 +250,7 @@ public partial class MainWindow : Window
     {
         if (_connectedHost is null)
         {
-            MessageBox.Show(this, "Connect to a Pi first.", "Remote control",
-                MessageBoxButton.OK, MessageBoxImage.Information);
+            Toaster.Show("Connect to your Pi first — pick it at the top and click Connect.");
             return;
         }
         var viewer = PiSignage.Signage.VncLauncher.FindViewer(PiSignage.Signage.VncLauncher.DefaultViewerPaths());
@@ -255,7 +262,7 @@ public partial class MainWindow : Window
             {
                 try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
                     "winget", $"install --id {PiSignage.Signage.VncLauncher.ViewerWingetId} -e --accept-source-agreements --accept-package-agreements") { UseShellExecute = true }); }
-                catch (System.Exception ex) { MessageBox.Show(this, "Couldn't launch winget: " + ex.Message); }
+                catch (System.Exception ex) { Toaster.Show("Couldn't start the installer: " + ex.Message, ToastKind.Error); }
             }
             return;
         }
@@ -265,15 +272,16 @@ public partial class MainWindow : Window
                 viewer, PiSignage.Signage.VncLauncher.BuildLaunchArgs(viewer, _connectedHost)) { UseShellExecute = false });
             LblStatus.Text = $"Opening remote control ({_connectedHost}:{PiSignage.Signage.VncLauncher.Port})…";
         }
-        catch (System.Exception ex) { MessageBox.Show(this, "Couldn't open the viewer: " + ex.Message); }
+        catch (System.Exception ex) { Toaster.Show("Couldn't open the viewer: " + ex.Message, ToastKind.Error); }
     }
 
     private async void BtnScan_Click(object sender, RoutedEventArgs e)
     {
         BtnScan.IsEnabled = false;
-        BtnScan.Content = "Scanning…";
+        BtnScan.Content = "Looking…";
         try
         {
+            int foundCount = 0;
             var found = await MdnsDiscovery.ScanAsync(TimeSpan.FromSeconds(3));
             foreach (var d in found)
             {
@@ -282,20 +290,26 @@ public partial class MainWindow : Window
                     using var probe = new ApiClient(d.Address, d.Port);
                     var s = await probe.GetStatusAsync();
                     if (s != null && !string.IsNullOrWhiteSpace(s.Name))
+                    {
                         _devices = PiSignage.Signage.DeviceStore.Upsert(_devices,
                             new PiSignage.Signage.SavedDevice { Name = s.Name, Hostname = s.Name, Ip = d.Address });
+                        foundCount++;
+                    }
                 }
                 catch { }
             }
             SaveDevices();
             ReloadDevices();
-            if (_devices.Count == 0) LblStatus.Text = "No devices found — type the Pi's address manually";
+            if (foundCount == 0)
+                Toaster.Show("No Pis found. Some WiFi networks block discovery — type the Pi's address in the box instead.", ToastKind.Warning);
+            else
+                Toaster.Show($"Found {foundCount} Pi{(foundCount == 1 ? "" : "s")} — pick one and click Connect.", ToastKind.Success);
         }
-        catch (System.Exception ex) { LblStatus.Text = "Scan failed: " + ex.Message; }
+        catch (System.Exception ex) { Toaster.Show("Search failed: " + ex.Message, ToastKind.Error); }
         finally
         {
             BtnScan.IsEnabled = true;
-            BtnScan.Content = "Scan network";
+            BtnScan.Content = "_Find my Pi";
         }
     }
 
@@ -321,13 +335,20 @@ public partial class MainWindow : Window
         }
     }
 
+    private void SetBusy(bool on) => Busy.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+
     // ---------------------------------------------------------- media
     private async Task ReloadMediaAsync()
     {
         if (_api == null) return;
-        var files = await _api.GetMediaAsync();
-        _media.Clear();
-        foreach (var f in files) _media.Add(f);
+        SetBusy(true);
+        try
+        {
+            var files = await _api.GetMediaAsync();
+            _media.Clear();
+            foreach (var f in files) _media.Add(f);
+        }
+        finally { SetBusy(false); }
     }
 
     private async void BtnUpload_Click(object sender, RoutedEventArgs e)
@@ -349,11 +370,11 @@ public partial class MainWindow : Window
                 await _api.UploadMediaAsync(path);
             }
             await ReloadMediaAsync();
-            LblStatus.Text = "Upload complete";
+            Toaster.Show("Upload finished — your files are on the Pi.", ToastKind.Success);
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "Upload failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+            Toaster.Show("Upload failed: " + ex.Message, ToastKind.Error);
         }
         finally { BtnUpload.IsEnabled = true; }
     }
@@ -370,7 +391,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "Could not delete", MessageBoxButton.OK, MessageBoxImage.Warning);
+            Toaster.Show("Couldn't delete the file: " + ex.Message, ToastKind.Error);
         }
     }
 
@@ -384,10 +405,15 @@ public partial class MainWindow : Window
     private async Task ReloadPlaylistAsync()
     {
         if (_api == null) return;
-        var pl = await _api.GetPlaylistAsync() ?? new Playlist();
-        _playlist.Clear();
-        foreach (var i in pl.Items) _playlist.Add(i);
-        SetDirty(false);
+        SetBusy(true);
+        try
+        {
+            var pl = await _api.GetPlaylistAsync() ?? new Playlist();
+            _playlist.Clear();
+            foreach (var i in pl.Items) _playlist.Add(i);
+            SetDirty(false);
+        }
+        finally { SetBusy(false); }
     }
 
     private void SetDirty(bool value)
@@ -402,8 +428,7 @@ public partial class MainWindow : Window
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
             (uri.Scheme != "http" && uri.Scheme != "https"))
         {
-            MessageBox.Show(this, "Enter a full web address, e.g. https://example.com",
-                "Invalid URL", MessageBoxButton.OK, MessageBoxImage.Information);
+            Toaster.Show("Enter a full web address, e.g. https://example.com", ToastKind.Warning);
             return;
         }
         _playlist.Add(new PlaylistItem { Type = "url", Source = url, Duration = 15, Name = uri.Host });
@@ -438,12 +463,11 @@ public partial class MainWindow : Window
         {
             await _api.PutPlaylistAsync(new Playlist { Items = _playlist.ToList(), Enabled = true });
             SetDirty(false);
-            LblStatus.Text = "Playlist saved — TV updated";
+            Toaster.Show("Saved — the TV is now playing your updated playlist.", ToastKind.Success);
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "Could not save playlist",
-                MessageBoxButton.OK, MessageBoxImage.Warning);
+            Toaster.Show("Couldn't save the playlist: " + ex.Message, ToastKind.Error);
         }
     }
 
@@ -467,8 +491,7 @@ public partial class MainWindow : Window
         if (_api == null) return;
         if (LstMedia.SelectedItem is not MediaFile f)
         {
-            MessageBox.Show(this, "Select a media file on the left first.", "Show now",
-                MessageBoxButton.OK, MessageBoxImage.Information);
+            Toaster.Show("Click a file in the list on the left first, then try again.");
             return;
         }
         try
@@ -478,7 +501,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "Show now failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+            Toaster.Show("Couldn't put that on the TV: " + ex.Message, ToastKind.Error);
         }
     }
 
@@ -488,8 +511,7 @@ public partial class MainWindow : Window
         var url = TxtUrl.Text.Trim();
         if (!Uri.TryCreate(url, UriKind.Absolute, out _))
         {
-            MessageBox.Show(this, "Enter a URL in the box above first.", "Show now",
-                MessageBoxButton.OK, MessageBoxImage.Information);
+            Toaster.Show("Type a web address in the box above first, e.g. https://example.com");
             return;
         }
         try
@@ -499,7 +521,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "Show now failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+            Toaster.Show("Couldn't put that on the TV: " + ex.Message, ToastKind.Error);
         }
     }
 

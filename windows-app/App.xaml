@@ -8,12 +8,25 @@
         <SolidColorBrush x:Key="Bg" Color="#F5F6F8"/>
         <SolidColorBrush x:Key="CardBg" Color="#FFFFFF"/>
         <SolidColorBrush x:Key="TextMuted" Color="#6B7280"/>
+        <SolidColorBrush x:Key="Border" Color="#E5E7EB"/>
+        <SolidColorBrush x:Key="StatusBarBg" Color="#1F2937"/>
+        <SolidColorBrush x:Key="StatusBarText" Color="#D1D5DB"/>
+        <SolidColorBrush x:Key="Warning" Color="#B45309"/>
+        <SolidColorBrush x:Key="Success" Color="#15803D"/>
+        <SolidColorBrush x:Key="Error" Color="#B91C1C"/>
+        <SolidColorBrush x:Key="PreviewBg" Color="#111111"/>
+        <SolidColorBrush x:Key="SelectionStroke" Color="#FF4DA3FF"/>
+        <SolidColorBrush x:Key="SelectionFill" Color="#224DA3FF"/>
+        <SolidColorBrush x:Key="OverlayScrim" Color="#33000000"/>
+        <SolidColorBrush x:Key="DisabledBg" Color="#9CA3AF"/>
 
         <Style TargetType="Button">
             <Setter Property="Padding" Value="10,5"/>
             <Setter Property="Margin" Value="2"/>
             <Setter Property="MinWidth" Value="70"/>
         </Style>
+        <!-- Setting Background kills the default chrome's hover states, so this
+             style carries its own minimal template with hover/pressed/disabled. -->
         <Style x:Key="PrimaryButton" TargetType="Button">
             <Setter Property="Padding" Value="14,7"/>
             <Setter Property="Margin" Value="2"/>
@@ -21,6 +34,29 @@
             <Setter Property="Foreground" Value="White"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Chrome" Background="{TemplateBinding Background}"
+                                Padding="{TemplateBinding Padding}" CornerRadius="3">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              RecognizesAccessKey="True"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="{StaticResource AccentDark}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="{StaticResource AccentDark}"/>
+                                <Setter TargetName="Chrome" Property="Opacity" Value="0.85"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Chrome" Property="Background" Value="{StaticResource DisabledBg}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
         <Style x:Key="SmallButton" TargetType="Button">
             <Setter Property="Padding" Value="6,2"/>

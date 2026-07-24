@@ -1,9 +1,11 @@
 <Window x:Class="PiSignage.Control.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:PiSignage.Control"
         Title="Pi Signage Control" Height="640" Width="960"
         MinHeight="520" MinWidth="820"
-        Background="{StaticResource Bg}">
+        Background="{StaticResource Bg}"
+        PreviewKeyDown="Window_PreviewKeyDown">
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -12,7 +14,7 @@
         </Grid.RowDefinitions>
 
         <!-- ============ connect bar ============ -->
-        <Border Grid.Row="0" Background="{StaticResource CardBg}" Padding="10,8" BorderBrush="#E5E7EB" BorderThickness="0,0,0,1">
+        <Border Grid.Row="0" Background="{StaticResource CardBg}" Padding="10,8" BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1">
             <!-- wraps to a second line when narrow instead of clipping; device actions
                  stay disabled until a device is selected/connected -->
             <WrapPanel Orientation="Horizontal">
@@ -21,17 +23,33 @@
                           VerticalContentAlignment="Center" DisplayMemberPath="Name"
                           IsTextSearchEnabled="False" SelectionChanged="CmbAddress_SelectionChanged"
                           KeyDown="CmbAddress_KeyDown"/>
-                <Button x:Name="BtnConnect" Content="Connect" Style="{StaticResource PrimaryButton}"
-                        Margin="0,0,6,4" Click="BtnConnect_Click"/>
-                <Button x:Name="BtnScan" Content="Scan" Margin="0,0,6,4" Click="BtnScan_Click"/>
-                <Button x:Name="BtnRename" Content="Rename" Margin="0,0,6,4" Click="BtnRename_Click" IsEnabled="False"/>
-                <Button x:Name="BtnForget" Content="Forget" Margin="0,0,14,4" Click="BtnForget_Click" IsEnabled="False"/>
-                <Button x:Name="BtnKiosk" Content="Kiosk on/off" Margin="0,0,6,4" Click="BtnKiosk_Click" IsEnabled="False"/>
-                <Button x:Name="BtnRemote" Content="Remote control" Margin="0,0,14,4" Click="BtnRemote_Click" IsEnabled="False"/>
-                <Button Content="Tournament Signage" Margin="0,0,6,4" Click="OpenSignage_Click"/>
-                <Button Content="Add a Pi" Margin="0,0,0,4" Click="AddPi_Click"/>
+                <Button x:Name="BtnConnect" Content="_Connect" Style="{StaticResource PrimaryButton}"
+                        Margin="0,0,6,4" Click="BtnConnect_Click"
+                        ToolTip="Connect to the Pi picked in the box on the left"/>
+                <Button x:Name="BtnScan" Content="_Find my Pi" Margin="0,0,6,4" Click="BtnScan_Click"
+                        ToolTip="Search your WiFi network for Pis and add them to the list"/>
+                <Button x:Name="BtnRename" Content="_Rename" Margin="0,0,6,4" Click="BtnRename_Click" IsEnabled="False"
+                        ToolTip="Give the selected Pi a friendlier name"
+                        ToolTipService.ShowOnDisabled="True"/>
+                <Button x:Name="BtnForget" Content="Re_move" Margin="0,0,14,4" Click="BtnForget_Click" IsEnabled="False"
+                        ToolTip="Take the selected Pi out of your device list (pick a saved Pi first)"
+                        ToolTipService.ShowOnDisabled="True"/>
+                <Button x:Name="BtnKiosk" Content="_TV display on/off" Margin="0,0,6,4" Click="BtnKiosk_Click" IsEnabled="False"
+                        ToolTip="Turn the signage on the TV on or off (connect to your Pi first)"
+                        ToolTipService.ShowOnDisabled="True"/>
+                <Button x:Name="BtnRemote" Content="_View Pi screen" Margin="0,0,14,4" Click="BtnRemote_Click" IsEnabled="False"
+                        ToolTip="See and control the Pi's screen from this computer (connect to your Pi first)"
+                        ToolTipService.ShowOnDisabled="True"/>
+                <Button Content="Tournament _Signage" Margin="0,0,6,4" Click="OpenSignage_Click"
+                        ToolTip="Capture pairings/standings from your screen and run the round timer"/>
+                <Button Content="Set up a _new Pi" Margin="0,0,0,4" Click="AddPi_Click"
+                        ToolTip="Connect a brand-new Pi to your WiFi using a USB cable"/>
             </WrapPanel>
         </Border>
+
+        <!-- thin loading bar over the top edge of the main area while talking to the Pi -->
+        <ProgressBar x:Name="Busy" Grid.Row="1" Height="4" VerticalAlignment="Top"
+                     IsIndeterminate="True" Visibility="Collapsed" Panel.ZIndex="1"/>
 
         <!-- ============ main area ============ -->
         <Grid Grid.Row="1" x:Name="MainArea" IsEnabled="False">
@@ -60,10 +78,27 @@
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
+                    <TextBlock Grid.Row="0" Text="Nothing here yet.&#10;Click 'Upload files…' below to add pictures or videos."
+                               Foreground="{StaticResource TextMuted}" TextAlignment="Center" TextWrapping="Wrap"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Items.Count, ElementName=LstMedia}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                     <WrapPanel Grid.Row="1" Margin="0,6,0,0">
-                        <Button x:Name="BtnUpload" Content="Upload files…" Click="BtnUpload_Click"/>
-                        <Button x:Name="BtnAddToPlaylist" Content="Add to playlist →" Click="BtnAddToPlaylist_Click"/>
-                        <Button x:Name="BtnDeleteMedia" Content="Delete" Click="BtnDeleteMedia_Click"/>
+                        <Button x:Name="BtnUpload" Content="Upload files…" Click="BtnUpload_Click"
+                                ToolTip="Copy pictures or videos from this computer onto the Pi"/>
+                        <Button x:Name="BtnAddToPlaylist" Content="Add to playlist →" Click="BtnAddToPlaylist_Click"
+                                ToolTip="Put the selected file into the playlist on the right"/>
+                        <Button x:Name="BtnDeleteMedia" Content="Delete" Click="BtnDeleteMedia_Click"
+                                ToolTip="Remove the selected file from the Pi"/>
                     </WrapPanel>
                 </Grid>
             </GroupBox>
@@ -116,6 +151,20 @@
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
+                        <TextBlock Grid.Row="0" Text="The TV has nothing to play.&#10;Pick a file on the left and click 'Add to playlist →'."
+                                   Foreground="{StaticResource TextMuted}" TextAlignment="Center" TextWrapping="Wrap"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Items.Count, ElementName=LstPlaylist}" Value="0">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
 
                         <DockPanel Grid.Row="1" Margin="0,6,0,0">
                             <TextBlock Text="Add web page:" VerticalAlignment="Center" Margin="0,0,6,0"/>
@@ -124,11 +173,14 @@
                         </DockPanel>
 
                         <WrapPanel Grid.Row="2" Margin="0,6,0,0">
-                            <Button x:Name="BtnSavePlaylist" Content="Save to Pi"
-                                    Style="{StaticResource PrimaryButton}" Click="BtnSavePlaylist_Click"/>
-                            <Button x:Name="BtnRevert" Content="Revert" Click="BtnRevert_Click"/>
-                            <Button x:Name="BtnSkip" Content="Skip ▶" Click="BtnSkip_Click"/>
-                            <TextBlock x:Name="LblDirty" Text="Unsaved changes" Foreground="#B45309"
+                            <Button x:Name="BtnSavePlaylist" Content="Save to _Pi"
+                                    Style="{StaticResource PrimaryButton}" Click="BtnSavePlaylist_Click"
+                                    ToolTip="Send your changes to the Pi — the TV updates right away (Ctrl+S)"/>
+                            <Button x:Name="BtnRevert" Content="Und_o changes" Click="BtnRevert_Click"
+                                    ToolTip="Throw away your edits and go back to what the TV is playing now"/>
+                            <Button x:Name="BtnSkip" Content="Ne_xt item ▶" Click="BtnSkip_Click"
+                                    ToolTip="Tell the TV to jump to the next item in the playlist"/>
+                            <TextBlock x:Name="LblDirty" Text="Unsaved changes" Foreground="{StaticResource Warning}"
                                        VerticalAlignment="Center" Margin="10,0,0,0" Visibility="Collapsed"/>
                         </WrapPanel>
                     </Grid>
@@ -136,8 +188,10 @@
 
                 <GroupBox Grid.Row="1" Header="Show now (interrupts the playlist)">
                     <WrapPanel>
-                        <Button x:Name="BtnShowSelected" Content="Show selected media" Click="BtnShowSelected_Click"/>
-                        <Button x:Name="BtnShowUrl" Content="Show URL above" Click="BtnShowUrl_Click"/>
+                        <Button x:Name="BtnShowSelected" Content="Show selected media" Click="BtnShowSelected_Click"
+                                ToolTip="Put the file selected on the left onto the TV right now"/>
+                        <Button x:Name="BtnShowUrl" Content="Show web page above" Click="BtnShowUrl_Click"
+                                ToolTip="Put the web page typed in the 'Add web page' box onto the TV right now"/>
                         <TextBlock Text="for" VerticalAlignment="Center" Margin="8,0,4,0"/>
                         <TextBox x:Name="TxtShowSecs" Text="60" Width="44" TextAlignment="Right"
                                  PreviewTextInput="NumberOnly_PreviewTextInput"/>
@@ -148,10 +202,14 @@
             </Grid>
         </Grid>
 
+        <!-- floats over the main area; separate from LblStatus so the 3s poll never overwrites it -->
+        <local:Toast x:Name="Toaster" Grid.Row="1" HorizontalAlignment="Right"
+                     VerticalAlignment="Bottom" Margin="0,0,16,12"/>
+
         <!-- ============ status strip ============ -->
-        <Border Grid.Row="2" Background="#1F2937" Padding="10,6">
+        <Border Grid.Row="2" Background="{StaticResource StatusBarBg}" Padding="10,6">
             <DockPanel>
-                <TextBlock x:Name="LblNow" DockPanel.Dock="Right" Foreground="#D1D5DB"/>
+                <TextBlock x:Name="LblNow" DockPanel.Dock="Right" Foreground="{StaticResource StatusBarText}"/>
                 <TextBlock x:Name="LblStatus" Foreground="White" Text="Not connected"/>
             </DockPanel>
         </Border>

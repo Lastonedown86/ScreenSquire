@@ -18,6 +18,11 @@ public partial class WifiSetupWindow : Window
         Loaded += async (_, _) => await DetectLoop();
     }
 
+    void Window_PreviewKeyDown(object s, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Escape) Close();
+    }
+
     async Task DetectLoop()
     {
         for (int i = 0; i < 60 && !_detected; i++)   // ~60s of polling
@@ -72,7 +77,7 @@ public partial class WifiSetupWindow : Window
     {
         Form.IsEnabled = false;
         Working.Visibility = Visibility.Visible;
-        Result.Foreground = Brushes.Gray;
+        Result.Foreground = (Brush)FindResource("TextMuted");
         Result.Text = $"Connecting the Pi to {TxtSsid.Text.Trim()}…";
         try
         {
@@ -87,7 +92,7 @@ public partial class WifiSetupWindow : Window
             }
             if (ok)
             {
-                Result.Foreground = Brushes.Green;
+                Result.Foreground = (Brush)FindResource("Success");
                 Result.Text = $"Connected — this Pi is on {TxtSsid.Text.Trim()} at {r.Ip}. You can unplug the USB cable.";
 
                 try
@@ -106,14 +111,14 @@ public partial class WifiSetupWindow : Window
             }
             else
             {
-                Result.Foreground = Brushes.Firebrick;
+                Result.Foreground = (Brush)FindResource("Error");
                 Result.Text = "Couldn't connect: " + (r.Error ?? "check the network name and password") + "  — Try again.";
                 Form.IsEnabled = true;
             }
         }
         catch (Exception ex)
         {
-            Result.Foreground = Brushes.Firebrick;
+            Result.Foreground = (Brush)FindResource("Error");
             Result.Text = "Setup failed: " + ex.Message;
             Form.IsEnabled = true;
         }

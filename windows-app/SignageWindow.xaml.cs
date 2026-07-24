@@ -99,6 +99,16 @@ public partial class SignageWindow : Window
     void NumberOnly_PreviewTextInput(object s, System.Windows.Input.TextCompositionEventArgs e)
         => e.Handled = !e.Text.All(char.IsDigit);
 
+    void Window_PreviewKeyDown(object s, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Escape) Close();
+    }
+
+    void TimerField_KeyDown(object s, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Enter) StartTimer_Click(s, e);
+    }
+
     void UpdateClock()
     {
         if (_endsAtLocal is not { } end) { ClockDisplay.Text = "—:—"; return; }
@@ -116,7 +126,11 @@ public partial class SignageWindow : Window
 
     async void Capture_Click(object s, RoutedEventArgs e)
     {
-        var sel = new RegionSelectorWindow { Owner = this };
+        var sel = new RegionSelectorWindow
+        {
+            Owner = this,
+            Instruction = $"Drag a box around the {Slot} — Esc to cancel",
+        };
         var ok = sel.ShowDialog();
         if (ok != true || sel.Result is null) return;
         _lastRegion = sel.Result;
@@ -145,7 +159,11 @@ public partial class SignageWindow : Window
             await _client.PostDashboardAsync(Base, DashboardPayload.Build(_state, _timer));
             Status.Text = $"Pushed {Slot} → {TargetLabel}";
         }
-        catch (Exception ex) { Status.Text = "Push failed: " + ex.Message; }
+        catch (Exception ex)
+        {
+            Status.Text = "Push failed: " + ex.Message;
+            Toaster.Show("Couldn't send the capture to the TV: " + ex.Message, ToastKind.Error);
+        }
         finally { SetBusy(false); }
     }
 
@@ -185,6 +203,10 @@ public partial class SignageWindow : Window
     async Task Post(string msg)
     {
         try { await _client.PostDashboardAsync(Base, DashboardPayload.Build(_state, _timer)); Status.Text = msg; }
-        catch (Exception ex) { Status.Text = "Push failed: " + ex.Message; }
+        catch (Exception ex)
+        {
+            Status.Text = "Push failed: " + ex.Message;
+            Toaster.Show("Couldn't reach the Pi — the TV was not updated: " + ex.Message, ToastKind.Error);
+        }
     }
 }
