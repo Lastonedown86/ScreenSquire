@@ -42,7 +42,7 @@ public static class VncLauncher
         if (viewerPath.Contains("TigerVNC", StringComparison.OrdinalIgnoreCase)
             || viewerPath.EndsWith("vncviewer.exe", StringComparison.OrdinalIgnoreCase)
                && !viewerPath.Contains("RealVNC", StringComparison.OrdinalIgnoreCase))
-            return $"{target} -FullScreen=0 -RemoteResize=0 -Scaling=Auto";
+            return $"{target} -FullScreen=0";   // windowed (TigerVNC 1.16 has no local scaling option)
         return target;
     }
 }
