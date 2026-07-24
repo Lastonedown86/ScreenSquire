@@ -1,4 +1,5 @@
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Windows;
 using System.Windows.Controls;
@@ -94,6 +95,9 @@ public partial class SignageWindow : Window
     {
         if (IsLoaded) await PreviewSlot();   // show the newly-selected slot's board
     }
+
+    void NumberOnly_PreviewTextInput(object s, System.Windows.Input.TextCompositionEventArgs e)
+        => e.Handled = !e.Text.All(char.IsDigit);
 
     void UpdateClock()
     {

@@ -114,6 +114,7 @@ public partial class MainWindow : Window
             await ReloadMediaAsync();
             await ReloadPlaylistAsync();
             await RefreshStatusAsync();
+            await RefreshKioskLabelAsync();
             _poll.Start();
             return status;
         }
@@ -123,6 +124,7 @@ public partial class MainWindow : Window
             MainArea.IsEnabled = false;
             _connectedHost = null;
             BtnKiosk.IsEnabled = BtnRemote.IsEnabled = false;
+            BtnKiosk.Content = "Kiosk on/off";
             LblStatus.Text = "Not connected";
             return null;
         }
@@ -135,6 +137,22 @@ public partial class MainWindow : Window
         bool isSaved = CmbAddress.SelectedItem is PiSignage.Signage.SavedDevice;
         if (BtnRename != null) BtnRename.IsEnabled = isSaved;
         if (BtnForget != null) BtnForget.IsEnabled = isSaved;
+    }
+
+    private void CmbAddress_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Enter) BtnConnect_Click(sender, e);
+    }
+
+    // Reject non-digit typing in numeric fields (durations/seconds/minutes).
+    private void NumberOnly_PreviewTextInput(object sender, System.Windows.Input.TextCompositionEventArgs e)
+        => e.Handled = !e.Text.All(char.IsDigit);
+
+    private async Task RefreshKioskLabelAsync()
+    {
+        if (_api == null) { BtnKiosk.Content = "Kiosk on/off"; return; }
+        try { var st = await _api.GetKioskAsync(); BtnKiosk.Content = (st?.Running ?? false) ? "Kiosk: On" : "Kiosk: Off"; }
+        catch { BtnKiosk.Content = "Kiosk on/off"; }
     }
 
     // Scan mDNS, GET /api/status on each, return the IP whose Pi name matches.
@@ -201,11 +219,16 @@ public partial class MainWindow : Window
         {
             var st = await _api.GetKioskAsync();
             bool running = st?.Running ?? false;
+            if (running &&   // turning the kiosk OFF stops the live TV — confirm
+                MessageBox.Show(this, "Turn the kiosk off? The TV will drop to the desktop (signage stops).",
+                    "Kiosk off", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                return;
             bool ok = await _api.SetKioskAsync(!running);
             if (!ok) { LblStatus.Text = "Kiosk toggle failed"; return; }
             LblStatus.Text = running
                 ? "Kiosk stopped — the Pi's desktop is now controllable via Remote control"
                 : "Kiosk started — signage is back on";
+            await RefreshKioskLabelAsync();
         }
         catch (Exception ex)
         {

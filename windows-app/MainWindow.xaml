@@ -19,7 +19,8 @@
                 <TextBlock Text="Device:" VerticalAlignment="Center" Margin="0,0,6,0" FontWeight="SemiBold"/>
                 <ComboBox x:Name="CmbAddress" IsEditable="True" MinWidth="240" Margin="0,0,6,4"
                           VerticalContentAlignment="Center" DisplayMemberPath="Name"
-                          IsTextSearchEnabled="False" SelectionChanged="CmbAddress_SelectionChanged"/>
+                          IsTextSearchEnabled="False" SelectionChanged="CmbAddress_SelectionChanged"
+                          KeyDown="CmbAddress_KeyDown"/>
                 <Button x:Name="BtnConnect" Content="Connect" Style="{StaticResource PrimaryButton}"
                         Margin="0,0,6,4" Click="BtnConnect_Click"/>
                 <Button x:Name="BtnScan" Content="Scan" Margin="0,0,6,4" Click="BtnScan_Click"/>
@@ -99,16 +100,18 @@
                                         </StackPanel>
                                         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="6,0">
                                             <TextBox Text="{Binding Duration, UpdateSourceTrigger=PropertyChanged}"
-                                                     Width="44" TextAlignment="Right"/>
+                                                     Width="44" TextAlignment="Right"
+                                                     PreviewTextInput="NumberOnly_PreviewTextInput"
+                                                     ToolTip="Seconds this item stays on screen"/>
                                             <TextBlock Text="s" VerticalAlignment="Center" Margin="2,0,0,0"
                                                        Foreground="{StaticResource TextMuted}"/>
                                         </StackPanel>
                                         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                                            <Button Content="▲" Style="{StaticResource SmallButton}" Click="BtnMoveUp_Click"/>
-                                            <Button Content="▼" Style="{StaticResource SmallButton}" Click="BtnMoveDown_Click"/>
+                                            <Button Content="▲" Style="{StaticResource SmallButton}" Click="BtnMoveUp_Click" ToolTip="Move up"/>
+                                            <Button Content="▼" Style="{StaticResource SmallButton}" Click="BtnMoveDown_Click" ToolTip="Move down"/>
                                         </StackPanel>
                                         <Button Grid.Column="3" Content="✕" Style="{StaticResource SmallButton}"
-                                                Click="BtnRemoveItem_Click" Margin="4,0,0,0"/>
+                                                Click="BtnRemoveItem_Click" Margin="4,0,0,0" ToolTip="Remove from playlist"/>
                                     </Grid>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
@@ -136,7 +139,8 @@
                         <Button x:Name="BtnShowSelected" Content="Show selected media" Click="BtnShowSelected_Click"/>
                         <Button x:Name="BtnShowUrl" Content="Show URL above" Click="BtnShowUrl_Click"/>
                         <TextBlock Text="for" VerticalAlignment="Center" Margin="8,0,4,0"/>
-                        <TextBox x:Name="TxtShowSecs" Text="60" Width="44" TextAlignment="Right"/>
+                        <TextBox x:Name="TxtShowSecs" Text="60" Width="44" TextAlignment="Right"
+                                 PreviewTextInput="NumberOnly_PreviewTextInput"/>
                         <TextBlock Text="seconds" VerticalAlignment="Center" Margin="4,0,8,0"/>
                         <Button x:Name="BtnClearShow" Content="Back to playlist" Click="BtnClearShow_Click"/>
                     </WrapPanel>
