@@ -84,13 +84,15 @@ SSH is no longer part of the update path.
   there is no build-time version step.
 - The app zips the embedded files at runtime when pushing (keeps the build
   simple; no build-time zip step).
-- Device list: when a Pi's `/api/status.agent_version` is older than the
-  bundled version, show a small "software update available" indicator on that
-  device.
-- "Update Pi software" action per device, plus "Update all Pis". Pushes the
-  zip, waits for the Pi to come back (same poll as the script), reports in
-  plain language ("TV will blink once while it updates"). Errors are shown in
-  plain language too — the client is non-technical.
+- When the connected Pi's `/api/status.agent_version` differs from the bundled
+  version, an **Update Pi software** button appears. One click updates every
+  saved Pi that is reachable and out of date (skips off/unreachable Pis and
+  up-to-date ones). Waits for each Pi to come back (same poll as the script),
+  reports in plain language ("TV will blink once while it updates"). Errors
+  are shown in plain language too — the client is non-technical.
+  *(Simplified during planning from per-device + update-all buttons: one
+  button that converges every reachable Pi is less UI and covers both cases
+  for a ~4-Pi fleet.)*
 - Old agents (no `agent_version` in status): treat as out of date; the update
   push will 404 until the Pi is bootstrapped over SSH once — show "this Pi
   needs a one-time manual update" rather than a raw error.
