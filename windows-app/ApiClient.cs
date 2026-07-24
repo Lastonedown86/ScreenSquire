@@ -77,6 +77,12 @@ public class ApiClient : IDisposable
         await ThrowIfError(resp);
     }
 
+    public async Task SetNameAsync(string name)
+    {
+        var resp = await _http.PostAsJsonAsync("/api/name", new { name });
+        await ThrowIfError(resp);
+    }
+
     public Task<KioskState?> GetKioskAsync() => _http.GetFromJsonAsync<KioskState>("/api/kiosk");
 
     public async Task<bool> SetKioskAsync(bool running)

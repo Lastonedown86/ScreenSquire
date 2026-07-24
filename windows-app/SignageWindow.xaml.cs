@@ -21,18 +21,82 @@ public partial class SignageWindow : Window
     public SignageWindow()
     {
         InitializeComponent();
+        App.TrackPlacement(this, "Signage");
         _clockTick = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         _clockTick.Tick += (_, _) => UpdateClock();
         _clockTick.Start();
         Loaded += (_, _) =>
         {
             this.ExcludeFromCapture();   // our window never appears in the screenshot
-            CmbAgent.ItemsSource = new PiSignage.Signage.DeviceStore().Load();  // saved Pis to pick from
+            var saved = new PiSignage.Signage.DeviceStore().Load();
+            CmbAgent.ItemsSource = saved;  // saved Pis to pick from
+            RestoreSession(saved);
             HydrateFromDevice();         // restore what's already on the device
         };
+        Closing += (_, _) => SaveSession();
         // WPF sometimes sends the owner behind other apps when an owned window
         // closes — pull the main window back to the front.
         Closed += (_, _) => Owner?.Activate();
+    }
+
+    // Called by MainWindow after a rename so the Target Pi list shows the new
+    // name immediately, keeping the same Pi selected.
+    public void RefreshDevices()
+    {
+        var keepHost = (CmbAgent.SelectedItem as PiSignage.Signage.SavedDevice)?.Hostname;
+        var saved = new PiSignage.Signage.DeviceStore().Load();
+        CmbAgent.ItemsSource = saved;
+        if (keepHost != null)
+            CmbAgent.SelectedItem = saved.FirstOrDefault(d =>
+                string.Equals(d.Hostname, keepHost, StringComparison.OrdinalIgnoreCase));
+    }
+
+    // Reopen where the operator left off: same target Pi, timer default, and
+    // capture region per slot (so Re-capture works without re-dragging).
+    void RestoreSession(System.Collections.Generic.List<PiSignage.Signage.SavedDevice> saved)
+    {
+        // last-used target > the Pi the main window is connected to > first saved Pi
+        var target = App.Settings.SignageTarget;
+        if (string.IsNullOrWhiteSpace(target)) target = App.Settings.LastDeviceHostname;
+        var dev = saved.FirstOrDefault(d => string.Equals(d.Hostname, target, StringComparison.OrdinalIgnoreCase))
+                  ?? saved.FirstOrDefault();
+        if (dev != null) CmbAgent.SelectedItem = dev;
+        else if (!string.IsNullOrWhiteSpace(target)) CmbAgent.Text = target;
+        TxtMinutes.Text = App.Settings.TimerMinutes.ToString();
+        foreach (var min in App.Settings.TimerPresets.Distinct().Where(m => m > 0))
+        {
+            var b = new Button
+            {
+                Content = $"{min} min",
+                Padding = new Thickness(8, 2, 8, 2),
+                Margin = new Thickness(4, 0, 0, 0),
+                ToolTip = $"Start a {min}-minute round with one click",
+            };
+            b.Click += (_, e) => { TxtMinutes.Text = min.ToString(); StartTimer_Click(b, e); };
+            Presets.Children.Add(b);
+        }
+        RestoreRegionForSlot();
+    }
+
+    void RestoreRegionForSlot()
+    {
+        if (App.Settings.Regions.TryGetValue(Slot, out var r))
+        {
+            _lastRegion = (r.X, r.Y, r.W, r.H);
+            BtnRecapture.IsEnabled = true;
+        }
+        else
+        {
+            _lastRegion = null;
+            BtnRecapture.IsEnabled = false;
+        }
+    }
+
+    void SaveSession()
+    {
+        App.Settings.SignageTarget = CmbAgent.SelectedItem is PiSignage.Signage.SavedDevice d
+            ? d.Hostname : CmbAgent.Text.Trim();
+        App.SaveSettings();
     }
 
     // On (re)open, pull the device's current boards + timer so the app reflects
@@ -93,7 +157,9 @@ public partial class SignageWindow : Window
 
     async void Slot_Changed(object s, SelectionChangedEventArgs e)
     {
-        if (IsLoaded) await PreviewSlot();   // show the newly-selected slot's board
+        if (!IsLoaded) return;
+        RestoreRegionForSlot();   // each slot remembers its own capture region
+        await PreviewSlot();      // show the newly-selected slot's board
     }
 
     void NumberOnly_PreviewTextInput(object s, System.Windows.Input.TextCompositionEventArgs e)
@@ -111,9 +177,29 @@ public partial class SignageWindow : Window
 
     void UpdateClock()
     {
-        if (_endsAtLocal is not { } end) { ClockDisplay.Text = "—:—"; return; }
+        if (_endsAtLocal is not { } end)
+        {
+            ClockDisplay.Text = "—:—";
+            ClockDisplay.Foreground = (System.Windows.Media.Brush)FindResource("TextMuted");
+            TimerInfo.Text = "No round running";
+            return;
+        }
         var rem = (int)Math.Round((end - DateTime.UtcNow).TotalSeconds);
-        ClockDisplay.Text = rem <= 0 ? "TIME" : $"{rem / 60:00}:{rem % 60:00}";
+        var round = _timer.Round is { } r ? $"Round {r}" : "Round";
+        if (rem <= 0)
+        {
+            ClockDisplay.Text = "TIME";
+            ClockDisplay.Foreground = (System.Windows.Media.Brush)FindResource("Error");
+            TimerInfo.Text = $"{round} — time's up (click Stop to clear)";
+        }
+        else
+        {
+            ClockDisplay.Text = $"{rem / 60:00}:{rem % 60:00}";
+            ClockDisplay.Foreground = SystemColors.ControlTextBrush;
+            TimerInfo.Text = _timerEditPending
+                ? $"{round} still running — click Start to restart with the new numbers"
+                : $"{round} — ends at {end.ToLocalTime():h:mm tt} on the TV";
+        }
     }
 
     string Slot => ((ComboBoxItem)CmbSlot.SelectedItem).Content!.ToString()!;
@@ -158,6 +244,8 @@ public partial class SignageWindow : Window
             _state.Boards[Slot] = path;
             await _client.PostDashboardAsync(Base, DashboardPayload.Build(_state, _timer));
             Status.Text = $"Pushed {Slot} → {TargetLabel}";
+            App.Settings.Regions[Slot] = new PiSignage.Signage.RegionRect { X = r.x, Y = r.y, W = r.w, H = r.h };
+            App.SaveSettings();
         }
         catch (Exception ex)
         {
@@ -182,31 +270,103 @@ public partial class SignageWindow : Window
         PreviewEmpty.Visibility = Visibility.Collapsed;
     }
 
+    bool _timerEditPending;   // minutes/round changed while a round is running
+
+    void TimerField_Changed(object s, TextChangedEventArgs e)
+    {
+        if (!IsLoaded || _endsAtLocal is null) return;
+        if (!((TextBox)s).IsKeyboardFocused) return;   // ignore programmatic updates
+        _timerEditPending = true;
+        UpdateClock();
+    }
+
     async void StartTimer_Click(object s, RoutedEventArgs e)
     {
         int min = int.TryParse(TxtMinutes.Text, out var m) ? m : 25;
         int round = int.TryParse(TxtRound.Text, out var rd) ? rd : 1;
         _timer.Start(min, $"Round {round}", round);
         _endsAtLocal = DateTime.UtcNow.AddSeconds(min * 60);
+        _timerEditPending = false;
         UpdateClock();
-        await Post("Timer started");
+        App.Settings.TimerMinutes = min;
+        App.SaveSettings();
+        BtnStart.IsEnabled = BtnStop.IsEnabled = false;
+        try
+        {
+            if (await Post($"Round {round} started"))
+                Toaster.Show($"Round {round} started — {min} minutes on the TV clock.", ToastKind.Success);
+        }
+        finally { BtnStart.IsEnabled = BtnStop.IsEnabled = true; }
     }
 
     async void StopTimer_Click(object s, RoutedEventArgs e)
     {
         _timer.Stop();
         _endsAtLocal = null;
+        _timerEditPending = false;
         UpdateClock();
-        await Post("Timer stopped");
+        BtnStart.IsEnabled = BtnStop.IsEnabled = false;
+        try
+        {
+            if (await Post("Timer stopped"))
+                Toaster.Show("Timer stopped — the TV clock is cleared.", ToastKind.Success);
+        }
+        finally { BtnStart.IsEnabled = BtnStop.IsEnabled = true; }
     }
 
-    async Task Post(string msg)
+    // Pin the board on the TV (show-now with no end time). The running timer
+    // rides on top via the kiosk's corner overlay, so nothing rotates.
+    async void PinBoardToTv_Click(object s, RoutedEventArgs e)
     {
-        try { await _client.PostDashboardAsync(Base, DashboardPayload.Build(_state, _timer)); Status.Text = msg; }
+        try
+        {
+            using var api = ApiFromBase();
+            await api.ShowNowAsync(new ShowNowRequest { Type = "url", Source = BoardPageUrl(Slot), Duration = null });
+            Toaster.Show($"The {Slot} are pinned on the TV — the timer floats on top while a round runs. Click 'Back to playlist' when the event is over.", ToastKind.Success);
+        }
+        catch (Exception ex)
+        {
+            Toaster.Show("Couldn't pin it on the TV: " + ex.Message, ToastKind.Error);
+        }
+    }
+
+    async void BackToPlaylist_Click(object s, RoutedEventArgs e)
+    {
+        try
+        {
+            using var api = ApiFromBase();
+            await api.ClearShowNowAsync();
+            Toaster.Show("The TV is back on its normal playlist.", ToastKind.Success);
+        }
+        catch (Exception ex)
+        {
+            Toaster.Show("Couldn't switch the TV back: " + ex.Message, ToastKind.Error);
+        }
+    }
+
+    // The kiosk browser runs ON the Pi, so it reaches its own agent via localhost.
+    static string BoardPageUrl(string slot) => $"http://localhost:8080/dashboard?view=board&name={slot}";
+
+    ApiClient ApiFromBase()
+    {
+        var u = new Uri(Base);
+        return new ApiClient(u.Host, u.Port);
+    }
+
+
+    async Task<bool> Post(string msg)
+    {
+        try
+        {
+            await _client.PostDashboardAsync(Base, DashboardPayload.Build(_state, _timer));
+            Status.Text = msg;
+            return true;
+        }
         catch (Exception ex)
         {
             Status.Text = "Push failed: " + ex.Message;
             Toaster.Show("Couldn't reach the Pi — the TV was not updated: " + ex.Message, ToastKind.Error);
+            return false;
         }
     }
 }

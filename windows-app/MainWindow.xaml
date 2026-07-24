@@ -11,6 +11,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <!-- ============ connect bar ============ -->
@@ -19,10 +20,32 @@
                  stay disabled until a device is selected/connected -->
             <WrapPanel Orientation="Horizontal">
                 <TextBlock Text="Device:" VerticalAlignment="Center" Margin="0,0,6,0" FontWeight="SemiBold"/>
-                <ComboBox x:Name="CmbAddress" IsEditable="True" MinWidth="240" Margin="0,0,6,4"
-                          VerticalContentAlignment="Center" DisplayMemberPath="Name"
-                          IsTextSearchEnabled="False" SelectionChanged="CmbAddress_SelectionChanged"
-                          KeyDown="CmbAddress_KeyDown"/>
+                <ComboBox x:Name="CmbAddress" MinWidth="240" Margin="0,0,6,4"
+                          VerticalContentAlignment="Center"
+                          SelectionChanged="CmbAddress_SelectionChanged"
+                          KeyDown="CmbAddress_KeyDown"
+                          ToolTip="Pick your Pi — use 'Find my Pi' if the list is empty">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal">
+                                <!-- green = reachable, gray = offline/unknown -->
+                                <Ellipse Width="9" Height="9" Margin="0,0,7,0" VerticalAlignment="Center">
+                                    <Ellipse.Style>
+                                        <Style TargetType="Ellipse">
+                                            <Setter Property="Fill" Value="{StaticResource TextMuted}"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Online}" Value="True">
+                                                    <Setter Property="Fill" Value="{StaticResource Success}"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Ellipse.Style>
+                                </Ellipse>
+                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
                 <Button x:Name="BtnConnect" Content="_Connect" Style="{StaticResource PrimaryButton}"
                         Margin="0,0,6,4" Click="BtnConnect_Click"
                         ToolTip="Connect to the Pi picked in the box on the left"/>
@@ -62,23 +85,46 @@
             <GroupBox Grid.Column="0" Header="Media on this Pi">
                 <Grid>
                     <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
-                    <ListBox x:Name="LstMedia" Grid.Row="0" SelectionMode="Single">
+                    <TextBlock Grid.Row="0" Text="Pictures and videos stored on your Pi."
+                               Foreground="{StaticResource TextMuted}" FontSize="11" Margin="0,0,0,4"/>
+                    <ListBox x:Name="LstMedia" Grid.Row="1" SelectionMode="Single"
+                             AllowDrop="True" Drop="LstMedia_Drop" DragOver="FileDrag_Over">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <DockPanel Margin="2">
-                                    <TextBlock Text="{Binding SizeText}" DockPanel.Dock="Right"
+                                    <Grid DockPanel.Dock="Left" Width="48" Height="32" Margin="0,0,8,0">
+                                        <TextBlock Text="{Binding Glyph}" FontSize="18"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Thumb}" Value="{x:Null}">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <Image Source="{Binding Thumb}" Stretch="Uniform"/>
+                                    </Grid>
+                                    <Button DockPanel.Dock="Right" Content="✕" Style="{StaticResource SmallButton}"
+                                            Click="MediaDelete_Click" VerticalAlignment="Center" Margin="8,0,0,0"
+                                            ToolTip="Delete this file from the Pi"/>
+                                    <TextBlock Text="{Binding SizeText}" DockPanel.Dock="Right" VerticalAlignment="Center"
                                                Foreground="{StaticResource TextMuted}" Margin="8,0,0,0"/>
-                                    <TextBlock Text="{Binding Type}" DockPanel.Dock="Right"
+                                    <TextBlock Text="{Binding Type}" DockPanel.Dock="Right" VerticalAlignment="Center"
                                                Foreground="{StaticResource TextMuted}" Margin="8,0,0,0"/>
-                                    <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
                                 </DockPanel>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
-                    <TextBlock Grid.Row="0" Text="Nothing here yet.&#10;Click 'Upload files…' below to add pictures or videos."
+                    <TextBlock Grid.Row="1" Text="Nothing here yet.&#10;Click 'Upload files…' below to add pictures or videos."
                                Foreground="{StaticResource TextMuted}" TextAlignment="Center" TextWrapping="Wrap"
                                HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
                         <TextBlock.Style>
@@ -92,13 +138,13 @@
                             </Style>
                         </TextBlock.Style>
                     </TextBlock>
-                    <WrapPanel Grid.Row="1" Margin="0,6,0,0">
+                    <WrapPanel Grid.Row="2" Margin="0,6,0,0">
                         <Button x:Name="BtnUpload" Content="Upload files…" Click="BtnUpload_Click"
                                 ToolTip="Copy pictures or videos from this computer onto the Pi"/>
+                        <Button x:Name="BtnAddUrl" Content="Add web page…" Click="BtnAddUrl_Click"
+                                ToolTip="Put a website (news, scores, …) into the playlist on the right"/>
                         <Button x:Name="BtnAddToPlaylist" Content="Add to playlist →" Click="BtnAddToPlaylist_Click"
                                 ToolTip="Put the selected file into the playlist on the right"/>
-                        <Button x:Name="BtnDeleteMedia" Content="Delete" Click="BtnDeleteMedia_Click"
-                                ToolTip="Remove the selected file from the Pi"/>
                     </WrapPanel>
                 </Grid>
             </GroupBox>
@@ -113,45 +159,68 @@
                 <GroupBox Grid.Row="0" Header="Playlist (loops on the TV)">
                     <Grid>
                         <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                             <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Text="What plays on the TV, in order. Click 'Save to Pi' when you're done."
+                                   Foreground="{StaticResource TextMuted}" FontSize="11" Margin="0,0,0,4"/>
 
-                        <ListBox x:Name="LstPlaylist" Grid.Row="0" HorizontalContentAlignment="Stretch">
+                        <ListBox x:Name="LstPlaylist" Grid.Row="1" HorizontalContentAlignment="Stretch"
+                                 AllowDrop="True" Drop="LstPlaylist_Drop" DragOver="FileDrag_Over"
+                                 PreviewMouseLeftButtonDown="LstPlaylist_PreviewMouseLeftButtonDown"
+                                 PreviewMouseMove="LstPlaylist_PreviewMouseMove">
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <Grid Margin="2">
                                         <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
                                             <ColumnDefinition Width="Auto"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
-                                        <StackPanel Grid.Column="0" Orientation="Vertical">
+                                        <Grid Grid.Column="0" Width="36" Height="24" Margin="0,0,6,0">
+                                            <TextBlock Text="{Binding Glyph}" FontSize="14"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Thumb}" Value="{x:Null}">
+                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            <Image Source="{Binding Thumb}" Stretch="Uniform"/>
+                                        </Grid>
+                                        <StackPanel Grid.Column="1" Orientation="Vertical">
                                             <TextBlock Text="{Binding Display}" TextTrimming="CharacterEllipsis"/>
                                             <TextBlock Text="{Binding Type}" FontSize="11"
                                                        Foreground="{StaticResource TextMuted}"/>
                                         </StackPanel>
-                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="6,0">
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="6,0">
                                             <TextBox Text="{Binding Duration, UpdateSourceTrigger=PropertyChanged}"
                                                      Width="44" TextAlignment="Right"
                                                      PreviewTextInput="NumberOnly_PreviewTextInput"
+                                                     TextChanged="Duration_TextChanged"
                                                      ToolTip="Seconds this item stays on screen"/>
                                             <TextBlock Text="s" VerticalAlignment="Center" Margin="2,0,0,0"
                                                        Foreground="{StaticResource TextMuted}"/>
                                         </StackPanel>
-                                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
                                             <Button Content="▲" Style="{StaticResource SmallButton}" Click="BtnMoveUp_Click" ToolTip="Move up"/>
                                             <Button Content="▼" Style="{StaticResource SmallButton}" Click="BtnMoveDown_Click" ToolTip="Move down"/>
                                         </StackPanel>
-                                        <Button Grid.Column="3" Content="✕" Style="{StaticResource SmallButton}"
+                                        <Button Grid.Column="4" Content="✕" Style="{StaticResource SmallButton}"
                                                 Click="BtnRemoveItem_Click" Margin="4,0,0,0" ToolTip="Remove from playlist"/>
                                     </Grid>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
-                        <TextBlock Grid.Row="0" Text="The TV has nothing to play.&#10;Pick a file on the left and click 'Add to playlist →'."
+                        <TextBlock Grid.Row="1" Text="The TV has nothing to play.&#10;Pick a file on the left and click 'Add to playlist →'."
                                    Foreground="{StaticResource TextMuted}" TextAlignment="Center" TextWrapping="Wrap"
                                    HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
                             <TextBlock.Style>
@@ -166,51 +235,84 @@
                             </TextBlock.Style>
                         </TextBlock>
 
-                        <DockPanel Grid.Row="1" Margin="0,6,0,0">
-                            <TextBlock Text="Add web page:" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                            <Button x:Name="BtnAddUrl" Content="Add" DockPanel.Dock="Right" Click="BtnAddUrl_Click"/>
-                            <TextBox x:Name="TxtUrl" Text="https://"/>
-                        </DockPanel>
-
-                        <WrapPanel Grid.Row="2" Margin="0,6,0,0">
-                            <Button x:Name="BtnSavePlaylist" Content="Save to _Pi"
-                                    Style="{StaticResource PrimaryButton}" Click="BtnSavePlaylist_Click"
-                                    ToolTip="Send your changes to the Pi — the TV updates right away (Ctrl+S)"/>
+                        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,6,0,0">
                             <Button x:Name="BtnRevert" Content="Und_o changes" Click="BtnRevert_Click"
                                     ToolTip="Throw away your edits and go back to what the TV is playing now"/>
                             <Button x:Name="BtnSkip" Content="Ne_xt item ▶" Click="BtnSkip_Click"
                                     ToolTip="Tell the TV to jump to the next item in the playlist"/>
-                            <TextBlock x:Name="LblDirty" Text="Unsaved changes" Foreground="{StaticResource Warning}"
-                                       VerticalAlignment="Center" Margin="10,0,0,0" Visibility="Collapsed"/>
-                        </WrapPanel>
+                        </StackPanel>
                     </Grid>
                 </GroupBox>
 
                 <GroupBox Grid.Row="1" Header="Show now (interrupts the playlist)">
+                    <StackPanel>
+                    <TextBlock Text="Temporarily put one thing on the TV, then it goes back to the playlist."
+                               Foreground="{StaticResource TextMuted}" FontSize="11" Margin="0,0,0,4"/>
                     <WrapPanel>
                         <Button x:Name="BtnShowSelected" Content="Show selected media" Click="BtnShowSelected_Click"
                                 ToolTip="Put the file selected on the left onto the TV right now"/>
-                        <Button x:Name="BtnShowUrl" Content="Show web page above" Click="BtnShowUrl_Click"
-                                ToolTip="Put the web page typed in the 'Add web page' box onto the TV right now"/>
+                        <Button x:Name="BtnShowUrl" Content="Show a web page…" Click="BtnShowUrl_Click"
+                                ToolTip="Type a web address and put it on the TV right now"/>
                         <TextBlock Text="for" VerticalAlignment="Center" Margin="8,0,4,0"/>
                         <TextBox x:Name="TxtShowSecs" Text="60" Width="44" TextAlignment="Right"
                                  PreviewTextInput="NumberOnly_PreviewTextInput"/>
                         <TextBlock Text="seconds" VerticalAlignment="Center" Margin="4,0,8,0"/>
-                        <Button x:Name="BtnClearShow" Content="Back to playlist" Click="BtnClearShow_Click"/>
+                        <Button x:Name="BtnClearShow" Content="Back to playlist" Click="BtnClearShow_Click"
+                                ToolTip="Stop the one-off item and resume the normal playlist"/>
                     </WrapPanel>
+                    </StackPanel>
                 </GroupBox>
             </Grid>
         </Grid>
+
+        <!-- getting-started card: shown instead of the greyed-out main area until connected -->
+        <Border x:Name="GettingStarted" Grid.Row="1" Background="{StaticResource CardBg}"
+                BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="6"
+                HorizontalAlignment="Center" VerticalAlignment="Center" Padding="28,22" MaxWidth="520">
+            <StackPanel>
+                <TextBlock Text="Let's get your TV playing" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12"/>
+                <TextBlock TextWrapping="Wrap" Margin="0,0,0,8">
+                    <Run FontWeight="SemiBold">1.</Run>
+                    <Run>Make sure your Pi is plugged in and on the same WiFi as this computer.</Run>
+                </TextBlock>
+                <TextBlock TextWrapping="Wrap" Margin="0,0,0,8">
+                    <Run FontWeight="SemiBold">2.</Run>
+                    <Run>Click</Run> <Run FontWeight="SemiBold">Find my Pi</Run>
+                    <Run>above. When it appears in the list, pick it and click</Run>
+                    <Run FontWeight="SemiBold">Connect</Run><Run>.</Run>
+                </TextBlock>
+                <TextBlock TextWrapping="Wrap">
+                    <Run FontWeight="SemiBold">3.</Run>
+                    <Run>Got a brand-new Pi that's never been set up? Click</Run>
+                    <Run FontWeight="SemiBold">Set up a new Pi</Run>
+                    <Run>and follow the steps.</Run>
+                </TextBlock>
+            </StackPanel>
+        </Border>
 
         <!-- floats over the main area; separate from LblStatus so the 3s poll never overwrites it -->
         <local:Toast x:Name="Toaster" Grid.Row="1" HorizontalAlignment="Right"
                      VerticalAlignment="Bottom" Margin="0,0,16,12"/>
 
+        <!-- ============ save bar: the one commit action for the whole window ============ -->
+        <Border Grid.Row="2" Background="{StaticResource CardBg}" Padding="10,8"
+                BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <TextBlock x:Name="LblDirty" Text="Unsaved changes" Foreground="{StaticResource Warning}"
+                           VerticalAlignment="Center" Margin="0,0,10,0" Visibility="Collapsed"/>
+                <Button x:Name="BtnSavePlaylist" Content="Save to _Pi"
+                        Style="{StaticResource PrimaryButton}" Click="BtnSavePlaylist_Click"
+                        IsEnabled="{Binding IsEnabled, ElementName=MainArea}"
+                        ToolTip="Send your changes to the Pi — the TV updates right away (Ctrl+S)"
+                        ToolTipService.ShowOnDisabled="True"/>
+            </StackPanel>
+        </Border>
+
         <!-- ============ status strip ============ -->
-        <Border Grid.Row="2" Background="{StaticResource StatusBarBg}" Padding="10,6">
+        <Border Grid.Row="3" Background="{StaticResource StatusBarBg}" Padding="10,6">
             <DockPanel>
                 <TextBlock x:Name="LblNow" DockPanel.Dock="Right" Foreground="{StaticResource StatusBarText}"/>
-                <TextBlock x:Name="LblStatus" Foreground="White" Text="Not connected"/>
+                <TextBlock x:Name="LblStatus" Foreground="White" Text="Not connected — follow the steps above"/>
             </DockPanel>
         </Border>
     </Grid>

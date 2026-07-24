@@ -39,6 +39,15 @@
   #offline { position: fixed; right: 16px; bottom: 16px; padding: 6px 12px;
              background: #b71c1c; color: #fff; font: 600 12px system-ui;
              border-radius: 4px; display: none; }
+
+  /* a running round timer is always visible, over whatever is playing */
+  #timerOverlay { position: fixed; top: 2vmin; right: 2vmin; display: none;
+                  background: rgba(0,0,0,.72); color: #fff; border-radius: 1.2vmin;
+                  padding: 1vmin 2vmin; text-align: center;
+                  font: 700 5vmin/1.15 system-ui, sans-serif;
+                  font-variant-numeric: tabular-nums; z-index: 10; }
+  #timerOverlay .lbl { font-size: 1.8vmin; font-weight: 600; color: #b9c0d0; }
+  #timerOverlay.over { background: rgba(160,20,20,.85); }
 </style>
 </head>
 <body>
@@ -46,6 +55,7 @@
   <div class="layer" id="a"></div>
   <div class="layer" id="b"></div>
   <div id="offline">Reconnecting…</div>
+  <div id="timerOverlay"><div class="lbl" id="timerLbl"></div><div id="timerVal">--:--</div></div>
 
 <script>
 (() => {
@@ -121,6 +131,40 @@
 
   // keepalive ping so half-dead connections get noticed
   setInterval(() => { if (ws && ws.readyState === 1) ws.send('ping'); }, 20000);
+
+  // ---- always-on round timer overlay ----
+  // Whatever the TV is playing, a running timer stays visible in the corner.
+  const tOverlay = document.getElementById('timerOverlay');
+  const tVal = document.getElementById('timerVal');
+  const tLbl = document.getElementById('timerLbl');
+  let tState = null, tEndsAt = null, tPausedRem = null, tLabel = '';
+
+  async function pollTimer() {
+    try {
+      const r = await fetch('/api/dashboard', { cache: 'no-store' });
+      const t = ((await r.json()) || {}).timer || {};
+      tState = t.state || 'stopped';
+      tEndsAt = t.state === 'running' ? t.endsAt : null;
+      tPausedRem = t.state === 'paused' ? t.remaining : null;
+      tLabel = t.label || '';
+    } catch (e) { /* keep last known state on a blip */ }
+  }
+
+  function fmtT(s) { s = Math.max(0, Math.round(s));
+    return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); }
+
+  function tickTimer() {
+    let rem = null;
+    if (tState === 'running' && tEndsAt != null) rem = (tEndsAt - Date.now()) / 1000;
+    else if (tState === 'paused') rem = tPausedRem;
+    if (rem == null) { tOverlay.style.display = 'none'; return; }
+    tOverlay.style.display = 'block';
+    tOverlay.classList.toggle('over', rem <= 0);
+    tVal.textContent = rem <= 0 ? 'TIME' : fmtT(rem);
+    tLbl.textContent = tState === 'paused' ? (tLabel + ' — paused').trim() : tLabel;
+  }
+  pollTimer(); setInterval(pollTimer, 5000);
+  setInterval(tickTimer, 250);
 
   // if the page has been up for a very long time, a nightly reload keeps
   // Chromium's memory in check (03:30 local). Only reload while connected —

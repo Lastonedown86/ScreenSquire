@@ -22,12 +22,59 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        App.TrackPlacement(this, "Main");
         Loaded += (_, _) => this.ExcludeFromCapture();   // control app never appears in a tournament screenshot
         LstMedia.ItemsSource = _media;
         LstPlaylist.ItemsSource = _playlist;
         _playlist.CollectionChanged += (_, _) => SetDirty(true);
         _poll.Tick += async (_, _) => await RefreshStatusAsync();
+        Closing += MainWindow_Closing;
         ReloadDevices();
+        _ = ProbeDevicesAsync();   // light up the online dots
+
+        // Reconnect to the Pi used last time, so the app opens ready to go.
+        var last = _devices.FirstOrDefault(d => string.Equals(
+            d.Hostname, App.Settings.LastDeviceHostname, System.StringComparison.OrdinalIgnoreCase));
+        if (last != null)
+        {
+            CmbAddress.SelectedItem = last;
+            Loaded += async (_, _) => await ConnectToDeviceAsync(last);
+        }
+    }
+
+    // Ask before losing unsaved playlist edits. Save is async, so the first
+    // pass cancels the close, saves, then closes for real.
+    private bool _closeConfirmed;
+    private async void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        if (_closeConfirmed || !_dirty || _api == null) return;
+        var r = MessageBox.Show(this,
+            "You changed the playlist but didn't save it to the Pi.\n\nSave before closing?",
+            "Unsaved changes", MessageBoxButton.YesNoCancel, MessageBoxImage.Warning);
+        if (r == MessageBoxResult.Cancel) { e.Cancel = true; return; }
+        if (r == MessageBoxResult.Yes)
+        {
+            e.Cancel = true;
+            if (!await SavePlaylistAsync()) return;   // save failed — stay open
+            _closeConfirmed = true;
+            Close();
+        }
+        // No -> close without saving
+    }
+
+    // Probe every saved Pi in parallel and set the dropdown's online dots.
+    private async Task ProbeDevicesAsync()
+    {
+        var devs = _devices.ToList();
+        await Task.WhenAll(devs.Select(async d =>
+        {
+            try
+            {
+                using var probe = new ApiClient(d.Ip);
+                d.Online = await probe.GetStatusAsync() != null;
+            }
+            catch { d.Online = false; }
+        }));
     }
 
     private void ReloadDevices()
@@ -54,27 +101,7 @@ public partial class MainWindow : Window
             await ConnectToDeviceAsync(dev);
             return;
         }
-        var addr = CmbAddress.Text.Trim();
-        if (addr.Length == 0) return;
-        int port = 8080;
-        var parts = addr.Split(':');
-        if (parts.Length == 2 && int.TryParse(parts[1], out var p)) { addr = parts[0]; port = p; }
-
-        var status = await ConnectHostAsync(addr, port);
-        if (status == null)
-        {
-            Toaster.Show($"Could not reach the Pi at {addr}:{port}. Check it's plugged in and on the same WiFi.", ToastKind.Error);
-            return;
-        }
-        if (!string.IsNullOrWhiteSpace(status.Name))
-        {
-            _devices = PiSignage.Signage.DeviceStore.Upsert(_devices,
-                new PiSignage.Signage.SavedDevice { Name = status.Name, Hostname = status.Name, Ip = addr });
-            SaveDevices();
-            ReloadDevices();
-            CmbAddress.SelectedItem = _devices.FirstOrDefault(d =>
-                string.Equals(d.Hostname, status.Name, System.StringComparison.OrdinalIgnoreCase));
-        }
+        Toaster.Show("Pick your Pi from the list first — or click 'Find my Pi' to search for it.");
     }
 
     // Try dev.Ip; on failure, re-resolve by hostname over mDNS, update Ip, retry.
@@ -105,8 +132,9 @@ public partial class MainWindow : Window
             _api?.Dispose();
             _api = new ApiClient(host, port);
             var status = await _api.GetStatusAsync() ?? throw new HttpRequestException("Empty response");
-            LblStatus.Text = $"Connected: {status.Name}";
+            LblStatus.Text = $"Connected to {DisplayName(status.Name)}";
             MainArea.IsEnabled = true;
+            GettingStarted.Visibility = Visibility.Collapsed;
             _connectedHost = host;
             BtnKiosk.IsEnabled = BtnRemote.IsEnabled = true;   // device actions target this Pi
             await ReloadMediaAsync();
@@ -114,16 +142,22 @@ public partial class MainWindow : Window
             await RefreshStatusAsync();
             await RefreshKioskLabelAsync();
             _poll.Start();
+            if (!string.IsNullOrWhiteSpace(status.Name))
+            {
+                App.Settings.LastDeviceHostname = status.Name;
+                App.SaveSettings();
+            }
             return status;
         }
         catch
         {
             _poll.Stop();
             MainArea.IsEnabled = false;
+            GettingStarted.Visibility = Visibility.Visible;
             _connectedHost = null;
             BtnKiosk.IsEnabled = BtnRemote.IsEnabled = false;
             BtnKiosk.Content = "_TV display on/off";
-            LblStatus.Text = "Not connected";
+            LblStatus.Text = "Not connected — follow the steps above";
             return null;
         }
         finally { BtnConnect.IsEnabled = true; }
@@ -157,6 +191,13 @@ public partial class MainWindow : Window
     private void NumberOnly_PreviewTextInput(object sender, System.Windows.Input.TextCompositionEventArgs e)
         => e.Handled = !e.Text.All(char.IsDigit);
 
+    // Duration edits update the bound item silently (no CollectionChanged);
+    // the focus guard skips the events fired while a reload populates the list.
+    private void Duration_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (((TextBox)sender).IsKeyboardFocused) SetDirty(true);
+    }
+
     private async Task RefreshKioskLabelAsync()
     {
         if (_api == null) { BtnKiosk.Content = "_TV display on/off"; return; }
@@ -186,14 +227,47 @@ public partial class MainWindow : Window
         return null;
     }
 
-    private void BtnRename_Click(object sender, RoutedEventArgs e)
+    // Friendly name for a Pi: the saved device's name if we have one, else the
+    // hostname the Pi reports. Keeps renames visible everywhere a name shows.
+    private string DisplayName(string hostname)
+    {
+        var dev = _devices.FirstOrDefault(d =>
+            string.Equals(d.Hostname, hostname, System.StringComparison.OrdinalIgnoreCase));
+        return string.IsNullOrWhiteSpace(dev?.Name) ? hostname : dev!.Name;
+    }
+
+    private async void BtnRename_Click(object sender, RoutedEventArgs e)
     {
         if (CmbAddress.SelectedItem is not PiSignage.Signage.SavedDevice dev) return;
         var name = TextPrompt.Ask(this, "New name for this Pi:", dev.Name);
         if (name == null) return;
+
+        var oldHostname = dev.Hostname;
         dev.Name = name;
+
+        // Push the rename to the Pi itself so its TV splash (and the name it
+        // reports to scans) match. If it's unreachable, the rename stays local.
+        try
+        {
+            using var api = new ApiClient(dev.Ip);
+            await api.SetNameAsync(name);
+            dev.Hostname = name;   // scans key devices by the Pi-reported name
+            if (string.Equals(App.Settings.LastDeviceHostname, oldHostname, StringComparison.OrdinalIgnoreCase))
+                App.Settings.LastDeviceHostname = name;
+            if (string.Equals(App.Settings.SignageTarget, oldHostname, StringComparison.OrdinalIgnoreCase))
+                App.Settings.SignageTarget = name;
+            App.SaveSettings();
+        }
+        catch
+        {
+            Toaster.Show("Name changed in your list, but the Pi couldn't be reached — its TV keeps the old name until it's back online.", ToastKind.Warning);
+        }
+
         SaveDevices();
         ReloadDevices();
+        // trickle the new name everywhere it's already on screen
+        if (_api != null) await RefreshStatusAsync();
+        foreach (var w in OwnedWindows.OfType<SignageWindow>()) w.RefreshDevices();
     }
 
     private void BtnForget_Click(object sender, RoutedEventArgs e)
@@ -209,11 +283,24 @@ public partial class MainWindow : Window
     private void OpenSignage_Click(object sender, RoutedEventArgs e)
         => new SignageWindow { Owner = this }.Show();
 
-    void AddPi_Click(object sender, System.Windows.RoutedEventArgs e)
+    async void AddPi_Click(object sender, System.Windows.RoutedEventArgs e)
     {
-        new WifiSetupWindow { Owner = this }.ShowDialog();   // modal: no concurrent device-file writes
+        var wizard = new WifiSetupWindow { Owner = this };
+        wizard.ShowDialog();   // modal: no concurrent device-file writes
         Activate();
         ReloadDevices();   // show the newly-provisioned Pi
+
+        // Close the loop: land the client connected to the Pi they just set up.
+        if (wizard.NewDeviceHostname != null)
+        {
+            var dev = _devices.FirstOrDefault(d => string.Equals(
+                d.Hostname, wizard.NewDeviceHostname, System.StringComparison.OrdinalIgnoreCase));
+            if (dev != null)
+            {
+                CmbAddress.SelectedItem = dev;
+                await ConnectToDeviceAsync(dev);
+            }
+        }
     }
 
     // Stop the kiosk to reach the Pi's desktop (drive the OS over VNC), or restart it.
@@ -300,8 +387,9 @@ public partial class MainWindow : Window
             }
             SaveDevices();
             ReloadDevices();
+            _ = ProbeDevicesAsync();
             if (foundCount == 0)
-                Toaster.Show("No Pis found. Some WiFi networks block discovery — type the Pi's address in the box instead.", ToastKind.Warning);
+                Toaster.Show("No Pis found. Check the Pi is powered on and on the same WiFi, then try again — or use 'Set up a new Pi'.", ToastKind.Warning);
             else
                 Toaster.Show($"Found {foundCount} Pi{(foundCount == 1 ? "" : "s")} — pick one and click Connect.", ToastKind.Success);
         }
@@ -320,19 +408,37 @@ public partial class MainWindow : Window
         {
             var s = await _api.GetStatusAsync();
             if (s == null) return;
-            LblStatus.Text = $"Connected: {s.Name}  •  {s.ScreensConnected} screen(s)"
-                             + (s.OverrideActive ? "  •  OVERRIDE ACTIVE" : "");
+            if (CmbAddress.SelectedItem is PiSignage.Signage.SavedDevice on) on.Online = true;
+            LblStatus.Text = $"Connected to {DisplayName(s.Name)}  •  {s.ScreensConnected} screen(s)"
+                             + (s.OverrideActive ? "  •  showing a one-off item (not the playlist)" : "");
             LblNow.Text = s.NowShowing == null ? "" : s.NowShowing.Type switch
             {
                 "idle" => "Now: idle",
-                "url" => $"Now: {s.NowShowing.Src}",
+                "url" => $"Now: {FriendlyUrlLabel(s.NowShowing.Src)}",
                 _ => $"Now: {s.NowShowing.Type} {System.IO.Path.GetFileName(s.NowShowing.Src ?? "")}"
             };
         }
         catch
         {
-            LblStatus.Text = "Connection lost — retrying…";
+            LblStatus.Text = "Lost connection to the Pi — trying to reconnect…";
+            if (CmbAddress.SelectedItem is PiSignage.Signage.SavedDevice off) off.Online = false;
         }
+    }
+
+    // The Pi's kiosk browser loads board/timer pages from its own agent via localhost,
+    // so the raw src reads "http://localhost:8080/…" — translate to plain language.
+    static string FriendlyUrlLabel(string? src)
+    {
+        if (string.IsNullOrEmpty(src)) return "";
+        if (!System.Uri.TryCreate(src, System.UriKind.Absolute, out var u)) return src;
+        if (u.AbsolutePath.StartsWith("/dashboard"))
+        {
+            var q = System.Web.HttpUtility.ParseQueryString(u.Query);
+            if (q["view"] == "timer") return "round timer";
+            var name = q["name"];
+            if (!string.IsNullOrEmpty(name)) return $"{name} board on the TV";
+        }
+        return $"webpage ({u.Host})";
     }
 
     private void SetBusy(bool on) => Busy.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
@@ -349,7 +455,31 @@ public partial class MainWindow : Window
             foreach (var f in files) _media.Add(f);
         }
         finally { SetBusy(false); }
+        _ = LoadThumbsAsync();   // fill in thumbnails after the list renders
     }
+
+    // Fetch/cache image thumbnails one by one and mirror them onto playlist rows.
+    private async Task LoadThumbsAsync()
+    {
+        var api = _api;
+        if (api == null) return;
+        foreach (var f in _media.Where(m => m.Type == "image" && m.Thumb == null).ToList())
+        {
+            if (_api != api) return;   // disconnected or switched Pi mid-load
+            f.Thumb = await ThumbnailCache.GetAsync(api.BaseUrl, f.Name, f.Bytes);
+        }
+        foreach (var f in _media) ApplyThumbToPlaylist(f);
+    }
+
+    private void ApplyThumbToPlaylist(MediaFile f)
+    {
+        if (f.Thumb == null) return;
+        foreach (var it in _playlist.Where(p => p.Type == "image" && p.Source == f.Name))
+            it.Thumb = f.Thumb;
+    }
+
+    private static readonly string[] MediaExts =
+        { ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".mp4", ".webm", ".mov", ".mkv" };
 
     private async void BtnUpload_Click(object sender, RoutedEventArgs e)
     {
@@ -360,28 +490,117 @@ public partial class MainWindow : Window
             Filter = "Media|*.jpg;*.jpeg;*.png;*.gif;*.webp;*.bmp;*.mp4;*.webm;*.mov;*.mkv|All files|*.*"
         };
         if (dlg.ShowDialog(this) != true) return;
+        await UploadFilesAsync(dlg.FileNames);
+    }
 
+    // Shared by the Upload button and drag-and-drop.
+    private async Task<bool> UploadFilesAsync(string[] paths)
+    {
+        if (_api == null) return false;
         BtnUpload.IsEnabled = false;
         try
         {
-            foreach (var path in dlg.FileNames)
+            foreach (var path in paths)
             {
                 LblStatus.Text = $"Uploading {System.IO.Path.GetFileName(path)}…";
                 await _api.UploadMediaAsync(path);
             }
             await ReloadMediaAsync();
             Toaster.Show("Upload finished — your files are on the Pi.", ToastKind.Success);
+            return true;
         }
         catch (Exception ex)
         {
             Toaster.Show("Upload failed: " + ex.Message, ToastKind.Error);
+            return false;
         }
         finally { BtnUpload.IsEnabled = true; }
     }
 
-    private async void BtnDeleteMedia_Click(object sender, RoutedEventArgs e)
+    // ---------------------------------------------------------- drag & drop
+    private static string[] DroppedMediaFiles(DragEventArgs e) =>
+        e.Data.GetData(DataFormats.FileDrop) is string[] files
+            ? files.Where(f => MediaExts.Contains(
+                  System.IO.Path.GetExtension(f).ToLowerInvariant())).ToArray()
+            : Array.Empty<string>();
+
+    private void FileDrag_Over(object sender, DragEventArgs e)
     {
-        if (_api == null || LstMedia.SelectedItem is not MediaFile f) return;
+        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy
+                  : e.Data.GetDataPresent(typeof(PlaylistItem)) ? DragDropEffects.Move
+                  : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private async void LstMedia_Drop(object sender, DragEventArgs e)
+    {
+        var files = DroppedMediaFiles(e);
+        if (files.Length == 0)
+        {
+            Toaster.Show("Drop pictures or videos (jpg, png, mp4, …) here to upload them.");
+            return;
+        }
+        await UploadFilesAsync(files);
+    }
+
+    private async void LstPlaylist_Drop(object sender, DragEventArgs e)
+    {
+        // dropping files = upload AND add to the playlist in one gesture
+        if (e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            var files = DroppedMediaFiles(e);
+            if (files.Length == 0)
+            {
+                Toaster.Show("Drop pictures or videos (jpg, png, mp4, …) here to put them on the TV.");
+                return;
+            }
+            if (!await UploadFilesAsync(files)) return;
+            foreach (var path in files)
+            {
+                var name = System.IO.Path.GetFileName(path);
+                var f = _media.FirstOrDefault(m => m.Name == name);
+                if (f != null) _playlist.Add(new PlaylistItem { Type = f.Type, Source = f.Name, Duration = 10, Thumb = f.Thumb });
+            }
+            return;
+        }
+
+        // internal drag = reorder
+        if (e.Data.GetData(typeof(PlaylistItem)) is not PlaylistItem dragged) return;
+        int from = _playlist.IndexOf(dragged);
+        if (from < 0) return;
+        var target = FindAncestor<ListBoxItem>(e.OriginalSource as DependencyObject)?.DataContext as PlaylistItem;
+        int to = target != null ? _playlist.IndexOf(target) : _playlist.Count - 1;
+        if (to >= 0 && to != from) _playlist.Move(from, to);
+    }
+
+    private Point _dragStart;
+
+    private void LstPlaylist_PreviewMouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        => _dragStart = e.GetPosition(null);
+
+    private void LstPlaylist_PreviewMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (e.LeftButton != System.Windows.Input.MouseButtonState.Pressed) return;
+        var diff = e.GetPosition(null) - _dragStart;
+        if (Math.Abs(diff.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(diff.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+        var src = e.OriginalSource as DependencyObject;
+        // clicking the row's buttons or duration box must not start a drag
+        if (FindAncestor<Button>(src) != null || FindAncestor<TextBox>(src) != null) return;
+        if (FindAncestor<ListBoxItem>(src)?.DataContext is not PlaylistItem item) return;
+        DragDrop.DoDragDrop(LstPlaylist, new DataObject(typeof(PlaylistItem), item), DragDropEffects.Move);
+    }
+
+    private static T? FindAncestor<T>(DependencyObject? d) where T : DependencyObject
+    {
+        while (d != null && d is not T)
+            d = System.Windows.Media.VisualTreeHelper.GetParent(d);
+        return d as T;
+    }
+
+    private async void MediaDelete_Click(object sender, RoutedEventArgs e)
+    {
+        if (_api == null || (sender as FrameworkElement)?.DataContext is not MediaFile f) return;
         if (MessageBox.Show(this, $"Delete {f.Name} from the Pi?", "Confirm",
                 MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
         try
@@ -412,6 +631,7 @@ public partial class MainWindow : Window
             _playlist.Clear();
             foreach (var i in pl.Items) _playlist.Add(i);
             SetDirty(false);
+            foreach (var f in _media) ApplyThumbToPlaylist(f);
         }
         finally { SetBusy(false); }
     }
@@ -422,16 +642,24 @@ public partial class MainWindow : Window
         LblDirty.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private void BtnAddUrl_Click(object sender, RoutedEventArgs e)
+    // Prompt for a full web address; returns null if cancelled or invalid.
+    private Uri? AskForUrl(string title)
     {
-        var url = TxtUrl.Text.Trim();
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
+        var url = TextPrompt.Ask(this, "Web address (e.g. https://example.com):", "https://", title);
+        if (url == null) return null;
+        if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri) ||
             (uri.Scheme != "http" && uri.Scheme != "https"))
         {
-            Toaster.Show("Enter a full web address, e.g. https://example.com", ToastKind.Warning);
-            return;
+            Toaster.Show("That doesn't look like a full web address — it should start with https://", ToastKind.Warning);
+            return null;
         }
-        _playlist.Add(new PlaylistItem { Type = "url", Source = url, Duration = 15, Name = uri.Host });
+        return uri;
+    }
+
+    private void BtnAddUrl_Click(object sender, RoutedEventArgs e)
+    {
+        if (AskForUrl("Add web page") is not { } uri) return;
+        _playlist.Add(new PlaylistItem { Type = "url", Source = uri.ToString(), Duration = 15, Name = uri.Host });
     }
 
     private void BtnMoveUp_Click(object sender, RoutedEventArgs e) => MoveItem(sender, -1);
@@ -454,7 +682,13 @@ public partial class MainWindow : Window
 
     private async void BtnSavePlaylist_Click(object sender, RoutedEventArgs e)
     {
-        if (_api == null) return;
+        if (await SavePlaylistAsync())
+            Toaster.Show("Saved — the TV is now playing your updated playlist.", ToastKind.Success);
+    }
+
+    private async Task<bool> SavePlaylistAsync()
+    {
+        if (_api == null) return false;
         // TextBox duration edits don't raise CollectionChanged; grab current values
         foreach (var item in _playlist)
             if (item.Duration < 1) item.Duration = 1;
@@ -463,23 +697,26 @@ public partial class MainWindow : Window
         {
             await _api.PutPlaylistAsync(new Playlist { Items = _playlist.ToList(), Enabled = true });
             SetDirty(false);
-            Toaster.Show("Saved — the TV is now playing your updated playlist.", ToastKind.Success);
+            return true;
         }
         catch (Exception ex)
         {
             Toaster.Show("Couldn't save the playlist: " + ex.Message, ToastKind.Error);
+            return false;
         }
     }
 
     private async void BtnRevert_Click(object sender, RoutedEventArgs e)
     {
-        try { await ReloadPlaylistAsync(); } catch { }
+        try { await ReloadPlaylistAsync(); }
+        catch (Exception ex) { Toaster.Show("Couldn't reload the playlist from the Pi: " + ex.Message, ToastKind.Error); }
     }
 
     private async void BtnSkip_Click(object sender, RoutedEventArgs e)
     {
         if (_api == null) return;
-        try { await _api.NextAsync(); } catch { }
+        try { await _api.NextAsync(); }
+        catch (Exception ex) { Toaster.Show("Couldn't skip to the next item: " + ex.Message, ToastKind.Error); }
     }
 
     // ---------------------------------------------------------- show now
@@ -508,15 +745,10 @@ public partial class MainWindow : Window
     private async void BtnShowUrl_Click(object sender, RoutedEventArgs e)
     {
         if (_api == null) return;
-        var url = TxtUrl.Text.Trim();
-        if (!Uri.TryCreate(url, UriKind.Absolute, out _))
-        {
-            Toaster.Show("Type a web address in the box above first, e.g. https://example.com");
-            return;
-        }
+        if (AskForUrl("Show a web page") is not { } uri) return;
         try
         {
-            await _api.ShowNowAsync(new ShowNowRequest { Type = "url", Source = url, Duration = ShowSeconds() });
+            await _api.ShowNowAsync(new ShowNowRequest { Type = "url", Source = uri.ToString(), Duration = ShowSeconds() });
             await RefreshStatusAsync();
         }
         catch (Exception ex)
@@ -533,6 +765,6 @@ public partial class MainWindow : Window
             await _api.ClearShowNowAsync();
             await RefreshStatusAsync();
         }
-        catch { }
+        catch (Exception ex) { Toaster.Show("Couldn't switch back to the playlist: " + ex.Message, ToastKind.Error); }
     }
 }

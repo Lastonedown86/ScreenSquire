@@ -22,7 +22,7 @@ public class NowShowing
     [JsonPropertyName("src")] public string? Src { get; set; }
 }
 
-public class PlaylistItem
+public class PlaylistItem : System.ComponentModel.INotifyPropertyChanged
 {
     [JsonPropertyName("id")] public string? Id { get; set; }
     [JsonPropertyName("type")] public string Type { get; set; } = "image"; // image | video | url
@@ -32,6 +32,17 @@ public class PlaylistItem
 
     [JsonIgnore]
     public string Display => string.IsNullOrWhiteSpace(Name) ? Source : Name!;
+
+    // UI-only: thumbnail arrives async after the list renders
+    System.Windows.Media.ImageSource? _thumb;
+    [JsonIgnore]
+    public System.Windows.Media.ImageSource? Thumb
+    {
+        get => _thumb;
+        set { _thumb = value; PropertyChanged?.Invoke(this, new(nameof(Thumb))); }
+    }
+    [JsonIgnore] public string Glyph => Type == "video" ? "🎬" : Type == "url" ? "🌐" : "🖼";
+    public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
 }
 
 public class Playlist
@@ -40,7 +51,7 @@ public class Playlist
     [JsonPropertyName("enabled")] public bool Enabled { get; set; } = true;
 }
 
-public class MediaFile
+public class MediaFile : System.ComponentModel.INotifyPropertyChanged
 {
     [JsonPropertyName("name")] public string Name { get; set; } = "";
     [JsonPropertyName("type")] public string Type { get; set; } = "";
@@ -50,6 +61,17 @@ public class MediaFile
     public string SizeText => Bytes >= 1_048_576
         ? $"{Bytes / 1_048_576.0:0.0} MB"
         : $"{Bytes / 1024.0:0} KB";
+
+    // UI-only: thumbnail arrives async after the list renders
+    System.Windows.Media.ImageSource? _thumb;
+    [JsonIgnore]
+    public System.Windows.Media.ImageSource? Thumb
+    {
+        get => _thumb;
+        set { _thumb = value; PropertyChanged?.Invoke(this, new(nameof(Thumb))); }
+    }
+    [JsonIgnore] public string Glyph => Type == "video" ? "🎬" : "🖼";
+    public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
 }
 
 public class MediaListResponse

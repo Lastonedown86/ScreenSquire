@@ -18,6 +18,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import shutil
 import socket
 import time
@@ -149,9 +150,25 @@ class Hub:
 hub = Hub()
 
 # ---------------------------------------------------------------- scheduler
+# YouTube watch/short links refuse to load inside an iframe (X-Frame-Options),
+# so the kiosk shows black. Rewrite them to the embed player, which allows it.
+_YT_RE = re.compile(
+    r"(?:youtube\.com/(?:watch\?(?:[^#]*&)?v=|shorts/|live/)|youtu\.be/)([\w-]{11})")
+
+
+def _normalize_url(src: str) -> str:
+    m = _YT_RE.search(src)
+    if not m:
+        return src
+    vid = m.group(1)
+    # mute: Chromium only autoplays muted video without a user gesture
+    return (f"https://www.youtube.com/embed/{vid}"
+            f"?autoplay=1&mute=1&controls=0&loop=1&playlist={vid}")
+
+
 def _item_payload(item: PlaylistItem) -> dict:
     if item.type == "url":
-        return {"type": "url", "src": item.source, "id": item.id}
+        return {"type": "url", "src": _normalize_url(item.source), "id": item.id}
     return {"type": item.type, "src": f"/media/{item.source}", "id": item.id}
 
 

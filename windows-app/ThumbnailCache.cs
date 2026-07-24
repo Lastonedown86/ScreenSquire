@@ -1,0 +1,61 @@
+using System.IO;
+using System.Net.Http;
+using System.Windows.Media.Imaging;
+
+namespace PiSignage.Control;
+
+// Small thumbnails for image media, fetched from the agent's /media static mount
+// and cached on disk so lists stay instant on later launches.
+public static class ThumbnailCache
+{
+    static readonly string Dir = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "PiSignage", "thumbs");
+    static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };
+    const int DecodeHeight = 64;   // shown at ~32-48px; 64 keeps it crisp on high-DPI
+
+    public static async Task<BitmapImage?> GetAsync(string baseUrl, string name, long bytes)
+    {
+        try
+        {
+            var key = Sanitize($"{new Uri(baseUrl).Host}_{name}_{bytes}") + ".png";
+            var path = Path.Combine(Dir, key);
+            if (File.Exists(path))
+                return Decode(await File.ReadAllBytesAsync(path));
+
+            var raw = await Http.GetByteArrayAsync($"{baseUrl}/media/{Uri.EscapeDataString(name)}");
+            var img = Decode(raw);
+            if (img == null) return null;
+
+            // persist the downsized version, not the original photo
+            var enc = new PngBitmapEncoder();
+            enc.Frames.Add(BitmapFrame.Create(img));
+            Directory.CreateDirectory(Dir);
+            using (var fs = File.Create(path)) enc.Save(fs);
+            return img;
+        }
+        catch { return null; }   // no thumbnail is fine — the glyph shows instead
+    }
+
+    static BitmapImage? Decode(byte[] data)
+    {
+        try
+        {
+            var img = new BitmapImage();
+            using var ms = new MemoryStream(data);
+            img.BeginInit();
+            img.CacheOption = BitmapCacheOption.OnLoad;
+            img.DecodePixelHeight = DecodeHeight;
+            img.StreamSource = ms;
+            img.EndInit();
+            img.Freeze();   // usable from any thread
+            return img;
+        }
+        catch { return null; }
+    }
+
+    static string Sanitize(string s)
+    {
+        foreach (var c in Path.GetInvalidFileNameChars()) s = s.Replace(c, '_');
+        return s;
+    }
+}

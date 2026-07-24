@@ -7,51 +7,73 @@
         Background="{StaticResource Bg}"
         PreviewKeyDown="Window_PreviewKeyDown">
     <Grid>
-    <DockPanel Margin="14" LastChildFill="True">
+    <DockPanel LastChildFill="True">
         <ProgressBar x:Name="Busy" DockPanel.Dock="Top" Height="4" IsIndeterminate="True"
-                     Visibility="Collapsed" Margin="0,0,0,8"/>
-        <StackPanel DockPanel.Dock="Top">
-            <TextBlock Text="Target Pi"/>
+                     Visibility="Collapsed"/>
+        <StackPanel DockPanel.Dock="Top" Margin="14,14,14,0">
+            <TextBlock Text="1. Choose your Pi" FontWeight="SemiBold"/>
             <ComboBox x:Name="CmbAgent" IsEditable="True" DisplayMemberPath="Name"
-                      IsTextSearchEnabled="False" Text="localhost:8080" Margin="0,2,0,10"/>
+                      IsTextSearchEnabled="False" Margin="0,2,0,10"
+                      ToolTip="The Pi whose TV should show the captures and timer"/>
 
-            <TextBlock Text="Capture slot"/>
-            <ComboBox x:Name="CmbSlot" SelectedIndex="0" Margin="0,2,0,10" SelectionChanged="Slot_Changed">
+            <TextBlock Text="2. Round timer" FontWeight="SemiBold"/>
+            <StackPanel Orientation="Horizontal" Margin="0,2,0,0" VerticalAlignment="Center">
+                <TextBlock Text="Min" VerticalAlignment="Center" Margin="0,0,4,0" Foreground="{StaticResource TextMuted}"/>
+                <TextBox x:Name="TxtMinutes" Text="25" Width="46" VerticalAlignment="Center"
+                         PreviewTextInput="NumberOnly_PreviewTextInput" KeyDown="TimerField_KeyDown"
+                         TextChanged="TimerField_Changed"/>
+                <TextBlock Text="Round" VerticalAlignment="Center" Margin="10,0,4,0" Foreground="{StaticResource TextMuted}"/>
+                <TextBox x:Name="TxtRound" Text="1" Width="46" VerticalAlignment="Center"
+                         PreviewTextInput="NumberOnly_PreviewTextInput" KeyDown="TimerField_KeyDown"
+                         TextChanged="TimerField_Changed"/>
+                <Button x:Name="BtnStart" Content="_Start" Click="StartTimer_Click" Margin="10,0,0,0"
+                        Style="{StaticResource PrimaryButton}" Padding="10,3"
+                        ToolTip="Start the countdown (or press Enter)"/>
+                <Button x:Name="BtnStop" Content="St_op" Click="StopTimer_Click" Margin="6,0,0,0" Padding="8,3"
+                        ToolTip="Stop the countdown"/>
+                <!-- one-click round presets, filled from settings in code -->
+                <StackPanel x:Name="Presets" Orientation="Horizontal" Margin="10,0,0,0"/>
+                <StackPanel Margin="16,0,0,0" VerticalAlignment="Center">
+                    <TextBlock x:Name="ClockDisplay" Text="—:—" FontSize="30" FontWeight="Bold"
+                               FontFamily="Consolas" LineHeight="30"/>
+                    <TextBlock x:Name="TimerInfo" Text="No round running"
+                               Foreground="{StaticResource TextMuted}" FontSize="11"/>
+                </StackPanel>
+            </StackPanel>
+
+            <TextBlock Text="3. Capture from your screen" FontWeight="SemiBold" Margin="0,12,0,0"/>
+            <ComboBox x:Name="CmbSlot" SelectedIndex="0" Margin="0,2,0,10" SelectionChanged="Slot_Changed"
+                      ToolTip="Which board on the TV this capture fills — pairings or standings">
                 <ComboBoxItem>pairings</ComboBoxItem>
                 <ComboBoxItem>standings</ComboBoxItem>
             </ComboBox>
 
-            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                <Button Content="Capture region…" Click="Capture_Click" Padding="10,4"/>
-                <Button x:Name="BtnRecapture" Content="Re-capture" Click="Recapture_Click"
-                        Padding="10,4" Margin="8,0,0,0" IsEnabled="False"/>
-            </StackPanel>
-
-            <TextBlock Text="Round timer"/>
-            <StackPanel Orientation="Horizontal" Margin="0,2,0,0" VerticalAlignment="Center">
-                <TextBlock Text="Min" VerticalAlignment="Center" Margin="0,0,4,0" Foreground="{StaticResource TextMuted}"/>
-                <TextBox x:Name="TxtMinutes" Text="25" Width="46" VerticalAlignment="Center"
-                         PreviewTextInput="NumberOnly_PreviewTextInput" KeyDown="TimerField_KeyDown"/>
-                <TextBlock Text="Round" VerticalAlignment="Center" Margin="10,0,4,0" Foreground="{StaticResource TextMuted}"/>
-                <TextBox x:Name="TxtRound" Text="1" Width="46" VerticalAlignment="Center"
-                         PreviewTextInput="NumberOnly_PreviewTextInput" KeyDown="TimerField_KeyDown"/>
-                <Button Content="Start" Click="StartTimer_Click" Margin="10,0,0,0" Padding="8,2"/>
-                <Button Content="Stop" Click="StopTimer_Click" Margin="6,0,0,0" Padding="8,2"/>
-                <TextBlock x:Name="ClockDisplay" Text="—:—" FontSize="30" FontWeight="Bold"
-                           FontFamily="Consolas" Margin="16,0,0,0" VerticalAlignment="Center"/>
+            <StackPanel Orientation="Horizontal">
+                <Button Content="_Capture region…" Click="Capture_Click" Padding="10,4"
+                        ToolTip="Draw a box on your screen — that area is sent to the TV"/>
+                <Button x:Name="BtnRecapture" Content="_Re-capture" Click="Recapture_Click"
+                        Padding="10,4" Margin="8,0,0,0" IsEnabled="False"
+                        ToolTip="Grab the same area again (after the page on your screen updates)"
+                        ToolTipService.ShowOnDisabled="True"/>
+                <Button Content="_Pin to TV" Click="PinBoardToTv_Click" Style="{StaticResource PrimaryButton}"
+                        Padding="10,4" Margin="8,0,0,0"
+                        ToolTip="Show this board on the TV and keep it there — the round timer floats on top"/>
+                <Button Content="Bac_k to playlist" Click="BackToPlaylist_Click"
+                        Padding="10,4" Margin="8,0,0,0"
+                        ToolTip="Unpin and let the TV go back to its normal playlist"/>
             </StackPanel>
 
             <TextBlock x:Name="Status" Margin="0,12,0,0" Foreground="{StaticResource TextMuted}" TextWrapping="Wrap"/>
 
-            <TextBlock Text="Last capture (what's on the TV)" Margin="0,12,0,4" Foreground="{StaticResource TextMuted}"/>
+            <TextBlock Text="Last capture (what's on the TV)" Margin="0,12,0,6" Foreground="{StaticResource TextMuted}"/>
         </StackPanel>
 
-        <!-- preview fills all remaining window space, so a bigger/resized window = bigger preview -->
-        <Border BorderBrush="{StaticResource Border}" BorderThickness="1" Background="{StaticResource PreviewBg}">
+        <!-- preview fills all remaining window space edge-to-edge; bigger window = bigger preview -->
+        <Border BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0" Background="{StaticResource PreviewBg}">
             <Grid>
                 <TextBlock x:Name="PreviewEmpty" Text="No capture yet" Foreground="{StaticResource TextMuted}"
                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                <Image x:Name="Preview" Stretch="Uniform" Margin="6"/>
+                <Image x:Name="Preview" Stretch="Uniform"/>
                 <ProgressBar x:Name="PreviewBusy" IsIndeterminate="True" Width="140" Height="6"
                              HorizontalAlignment="Center" VerticalAlignment="Center"
                              Visibility="Collapsed"/>
