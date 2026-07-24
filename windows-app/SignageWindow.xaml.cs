@@ -90,15 +90,10 @@ public partial class SignageWindow : Window
     void RestoreRegionForSlot()
     {
         if (App.Settings.Regions.TryGetValue(Slot, out var r))
-        {
             _lastRegion = (r.X, r.Y, r.W, r.H);
-            BtnRecapture.IsEnabled = true;
-        }
         else
-        {
             _lastRegion = null;
-            BtnRecapture.IsEnabled = false;
-        }
+        UpdateActionButtons();   // single gate: recomputes BtnRecapture from Targets.Any() && _lastRegion
     }
 
     void SaveSession()
@@ -236,7 +231,7 @@ public partial class SignageWindow : Window
         var ok = sel.ShowDialog();
         if (ok != true || sel.Result is null) return;
         _lastRegion = sel.Result;
-        BtnRecapture.IsEnabled = true;
+        UpdateActionButtons();   // single gate: recomputes BtnRecapture from Targets.Any() && _lastRegion
         await CaptureAndPush(_lastRegion.Value);
     }
 
@@ -248,6 +243,7 @@ public partial class SignageWindow : Window
     // One capture -> every checked TV. Upload the PNG then post the dashboard per TV.
     async Task CaptureAndPush((int x, int y, int w, int h) r)
     {
+        if (!Targets.Any()) { Status.Text = "Tick at least one TV above."; return; }
         SetBusy(true);
         try
         {
@@ -278,6 +274,7 @@ public partial class SignageWindow : Window
 
     async Task<bool> Post(string msg)
     {
+        if (!Targets.Any()) { Status.Text = "Tick at least one TV above."; return false; }
         var result = await FanOutDashboard();
         Status.Text = result.Failed.Count == 0 ? msg : result.Summary();
         if (result.Failed.Count > 0)
@@ -326,7 +323,7 @@ public partial class SignageWindow : Window
             if (await Post($"Round {round} started"))
                 Toaster.Show($"Round {round} started — {min} minutes on the TV clock.", ToastKind.Success);
         }
-        finally { BtnStart.IsEnabled = BtnStop.IsEnabled = true; }
+        finally { UpdateActionButtons(); }
     }
 
     async void StopTimer_Click(object s, RoutedEventArgs e)
@@ -341,7 +338,7 @@ public partial class SignageWindow : Window
             if (await Post("Timer stopped"))
                 Toaster.Show("Timer stopped — the TV clock is cleared.", ToastKind.Success);
         }
-        finally { BtnStart.IsEnabled = BtnStop.IsEnabled = true; }
+        finally { UpdateActionButtons(); }
     }
 
     // Pin the board on the TV (show-now with no end time). The running timer
