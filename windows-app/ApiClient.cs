@@ -59,6 +59,28 @@ public class ApiClient : IDisposable
         await ThrowIfError(resp);
     }
 
+    /// <summary>Takes a file off the playlist and any dashboard board so it can be deleted or replaced.</summary>
+    public async Task DetachMediaAsync(string name)
+    {
+        var resp = await _http.PostAsync($"/api/media/{Uri.EscapeDataString(name)}/detach", null);
+        await ThrowIfError(resp);
+    }
+
+    /// <summary>Renames a media file; the Pi rewrites playlist/dashboard references. Returns the new full filename.</summary>
+    public async Task<string> RenameMediaAsync(string name, string newBaseName)
+    {
+        var resp = await _http.PostAsJsonAsync(
+            $"/api/media/{Uri.EscapeDataString(name)}/rename", new { new_name = newBaseName });
+        await ThrowIfError(resp);
+        var r = await resp.Content.ReadFromJsonAsync<RenameResult>();
+        return r?.Name ?? name;
+    }
+
+    private class RenameResult
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("name")] public string? Name { get; set; }
+    }
+
     public async Task ShowNowAsync(ShowNowRequest req)
     {
         var resp = await _http.PostAsJsonAsync("/api/show-now", req, JsonOpts);
@@ -106,7 +128,8 @@ public class ApiClient : IDisposable
         }
         catch { /* body wasn't JSON */ }
         throw new HttpRequestException(
-            string.IsNullOrEmpty(detail) ? $"Request failed ({(int)resp.StatusCode})" : detail);
+            string.IsNullOrEmpty(detail) ? $"Request failed ({(int)resp.StatusCode})" : detail,
+            null, resp.StatusCode);   // callers can react to e.g. 409 Conflict
     }
 
     public void Dispose() => _http.Dispose();

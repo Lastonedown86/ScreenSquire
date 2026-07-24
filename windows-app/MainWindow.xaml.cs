@@ -452,7 +452,12 @@ public partial class MainWindow : Window
         {
             var files = await _api.GetMediaAsync();
             _media.Clear();
-            foreach (var f in files) _media.Add(f);
+            foreach (var f in files)
+            {
+                f.PropertyChanged += MediaChecked_Changed;
+                _media.Add(f);
+            }
+            UpdateDeleteSelectedButton();
         }
         finally { SetBusy(false); }
         _ = LoadThumbsAsync();   // fill in thumbnails after the list renders
@@ -601,16 +606,120 @@ public partial class MainWindow : Window
     private async void MediaDelete_Click(object sender, RoutedEventArgs e)
     {
         if (_api == null || (sender as FrameworkElement)?.DataContext is not MediaFile f) return;
-        if (MessageBox.Show(this, $"Delete {f.Name} from the Pi?", "Confirm",
+        await DeleteFilesAsync(new System.Collections.Generic.List<MediaFile> { f });
+    }
+
+    // Shared by the row ✕ and 'Delete selected'. Files still being shown on
+    // the TV get a follow-up prompt offering to take them off first.
+    private async Task DeleteFilesAsync(System.Collections.Generic.List<MediaFile> picked)
+    {
+        if (_api == null || picked.Count == 0) return;
+        var what = picked.Count == 1 ? picked[0].Name : $"{picked.Count} files";
+        if (MessageBox.Show(this, $"Delete {what} from the Pi?", "Confirm",
                 MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+
+        var inUse = new System.Collections.Generic.List<MediaFile>();
+        var failed = new System.Collections.Generic.List<string>();
+        var deleted = new System.Collections.Generic.List<string>();
+        SetBusy(true);
         try
         {
-            await _api.DeleteMediaAsync(f.Name);
+            foreach (var f in picked)
+            {
+                try { await _api.DeleteMediaAsync(f.Name); deleted.Add(f.Name); }
+                catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Conflict) { inUse.Add(f); }
+                catch (Exception ex) { failed.Add($"{f.Name} — {ex.Message}"); }
+            }
+        }
+        finally { SetBusy(false); }
+
+        if (inUse.Count > 0)
+        {
+            var q = inUse.Count == 1
+                ? $"{inUse[0].Name} is currently being shown on the TV.\n\nTake it off the screen and delete it?"
+                : "These files are currently being shown on the TV:\n"
+                  + string.Join("\n", inUse.Select(f => "  • " + f.Name))
+                  + "\n\nTake them off the screen and delete them?";
+            if (MessageBox.Show(this, q, "Still on the TV",
+                    MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
+            {
+                SetBusy(true);
+                try
+                {
+                    foreach (var f in inUse)
+                    {
+                        try
+                        {
+                            await _api.DetachMediaAsync(f.Name);
+                            await _api.DeleteMediaAsync(f.Name);
+                            deleted.Add(f.Name);
+                        }
+                        catch (Exception ex) { failed.Add($"{f.Name} — {ex.Message}"); }
+                    }
+                }
+                finally { SetBusy(false); }
+            }
+        }
+
+        await ReloadMediaAsync();
+        // Detach rewrote the Pi's playlist — mirror locally without clobbering
+        // unsaved edits.
+        if (!_dirty) await ReloadPlaylistAsync();
+        else
+            foreach (var it in _playlist.Where(p => deleted.Contains(p.Source)).ToList())
+                _playlist.Remove(it);
+        if (failed.Count > 0)
+            Toaster.Show("Some files couldn't be deleted:\n" + string.Join("\n", failed), ToastKind.Warning);
+    }
+
+    private void MediaChecked_Changed(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(MediaFile.IsChecked)) UpdateDeleteSelectedButton();
+    }
+
+    private void UpdateDeleteSelectedButton()
+    {
+        int n = _media.Count(m => m.IsChecked);
+        BtnDeleteSelected.IsEnabled = n > 0;
+        BtnDeleteSelected.Content = n > 0 ? $"Delete selected ({n})" : "Delete selected";
+        ChkSelectAll.IsEnabled = _media.Count > 0;
+        // programmatic set — Click only fires on user clicks, so no feedback loop
+        ChkSelectAll.IsChecked = n == 0 ? false : n == _media.Count ? true : (bool?)null;
+    }
+
+    private void ChkSelectAll_Click(object sender, RoutedEventArgs e)
+    {
+        bool on = ChkSelectAll.IsChecked == true;
+        foreach (var m in _media) m.IsChecked = on;
+        UpdateDeleteSelectedButton();   // covers the empty-list click
+    }
+
+    private async void BtnDeleteSelected_Click(object sender, RoutedEventArgs e)
+    {
+        await DeleteFilesAsync(_media.Where(m => m.IsChecked).ToList());
+    }
+
+    private async void MediaRename_Click(object sender, RoutedEventArgs e)
+    {
+        if (_api == null || (sender as FrameworkElement)?.DataContext is not MediaFile f) return;
+        var entered = TextPrompt.Ask(this, "New name for this file:",
+            System.IO.Path.GetFileNameWithoutExtension(f.Name), "Rename");
+        if (string.IsNullOrWhiteSpace(entered)) return;
+        var oldName = f.Name;
+        try
+        {
+            var newName = await _api.RenameMediaAsync(oldName, entered.Trim());
             await ReloadMediaAsync();
+            // The Pi rewrote its playlist to the new name. Mirror that locally —
+            // but never clobber unsaved edits with a server reload.
+            if (!_dirty) await ReloadPlaylistAsync();
+            else
+                foreach (var it in _playlist.Where(p => p.Type != "url" && p.Source == oldName))
+                    it.Source = newName;
         }
         catch (Exception ex)
         {
-            Toaster.Show("Couldn't delete the file: " + ex.Message, ToastKind.Error);
+            Toaster.Show("Couldn't rename the file: " + ex.Message, ToastKind.Error);
         }
     }
 

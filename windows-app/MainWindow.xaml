@@ -89,13 +89,21 @@
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
-                    <TextBlock Grid.Row="0" Text="Pictures and videos stored on your Pi."
-                               Foreground="{StaticResource TextMuted}" FontSize="11" Margin="0,0,0,4"/>
+                    <DockPanel Grid.Row="0" Margin="0,0,0,4">
+                        <CheckBox x:Name="ChkSelectAll" Content="Select all" DockPanel.Dock="Right"
+                                  Click="ChkSelectAll_Click" IsEnabled="False" VerticalAlignment="Center"
+                                  FontSize="11" ToolTip="Tick or untick every file in the list"/>
+                        <TextBlock Text="Pictures and videos stored on your Pi."
+                                   Foreground="{StaticResource TextMuted}" FontSize="11" VerticalAlignment="Center"/>
+                    </DockPanel>
                     <ListBox x:Name="LstMedia" Grid.Row="1" SelectionMode="Single"
                              AllowDrop="True" Drop="LstMedia_Drop" DragOver="FileDrag_Over">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <DockPanel Margin="2">
+                                    <CheckBox DockPanel.Dock="Left" IsChecked="{Binding IsChecked}"
+                                              VerticalAlignment="Center" Margin="0,0,6,0"
+                                              ToolTip="Tick files, then use 'Delete selected' below"/>
                                     <Grid DockPanel.Dock="Left" Width="48" Height="32" Margin="0,0,8,0">
                                         <TextBlock Text="{Binding Glyph}" FontSize="18"
                                                    HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -113,8 +121,11 @@
                                         <Image Source="{Binding Thumb}" Stretch="Uniform"/>
                                     </Grid>
                                     <Button DockPanel.Dock="Right" Content="✕" Style="{StaticResource SmallButton}"
-                                            Click="MediaDelete_Click" VerticalAlignment="Center" Margin="8,0,0,0"
+                                            Click="MediaDelete_Click" VerticalAlignment="Center" Margin="4,0,0,0"
                                             ToolTip="Delete this file from the Pi"/>
+                                    <Button DockPanel.Dock="Right" Content="✎" Style="{StaticResource SmallButton}"
+                                            Click="MediaRename_Click" VerticalAlignment="Center" Margin="8,0,0,0"
+                                            ToolTip="Rename this file"/>
                                     <TextBlock Text="{Binding SizeText}" DockPanel.Dock="Right" VerticalAlignment="Center"
                                                Foreground="{StaticResource TextMuted}" Margin="8,0,0,0"/>
                                     <TextBlock Text="{Binding Type}" DockPanel.Dock="Right" VerticalAlignment="Center"
@@ -145,6 +156,8 @@
                                 ToolTip="Put a website (news, scores, …) into the playlist on the right"/>
                         <Button x:Name="BtnAddToPlaylist" Content="Add to playlist →" Click="BtnAddToPlaylist_Click"
                                 ToolTip="Put the selected file into the playlist on the right"/>
+                        <Button x:Name="BtnDeleteSelected" Content="Delete selected" Click="BtnDeleteSelected_Click"
+                                IsEnabled="False" ToolTip="Delete every ticked file from the Pi"/>
                     </WrapPanel>
                 </Grid>
             </GroupBox>

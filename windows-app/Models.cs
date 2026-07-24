@@ -26,7 +26,20 @@ public class PlaylistItem : System.ComponentModel.INotifyPropertyChanged
 {
     [JsonPropertyName("id")] public string? Id { get; set; }
     [JsonPropertyName("type")] public string Type { get; set; } = "image"; // image | video | url
-    [JsonPropertyName("source")] public string Source { get; set; } = "";
+
+    // notifies so rows refresh when a media rename rewrites sources in place
+    string _source = "";
+    [JsonPropertyName("source")]
+    public string Source
+    {
+        get => _source;
+        set
+        {
+            _source = value;
+            PropertyChanged?.Invoke(this, new(nameof(Source)));
+            PropertyChanged?.Invoke(this, new(nameof(Display)));
+        }
+    }
     [JsonPropertyName("duration")] public int Duration { get; set; } = 10;
     [JsonPropertyName("name")] public string? Name { get; set; }
 
@@ -71,6 +84,15 @@ public class MediaFile : System.ComponentModel.INotifyPropertyChanged
         set { _thumb = value; PropertyChanged?.Invoke(this, new(nameof(Thumb))); }
     }
     [JsonIgnore] public string Glyph => Type == "video" ? "🎬" : "🖼";
+
+    // UI-only: multi-select checkbox state
+    bool _isChecked;
+    [JsonIgnore]
+    public bool IsChecked
+    {
+        get => _isChecked;
+        set { _isChecked = value; PropertyChanged?.Invoke(this, new(nameof(IsChecked))); }
+    }
     public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
 }
 

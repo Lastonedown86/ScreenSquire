@@ -570,6 +570,70 @@ async def delete_media(name: str):
     return {"ok": True}
 
 
+@app.post("/api/media/{name}/detach")
+async def detach_media(name: str):
+    """Stop displaying a file: pull it out of the playlist and off any
+    dashboard board, so it can then be deleted or replaced."""
+    safe = Path(name).name
+    removed = 0
+    kept = [i for i in state.playlist.items if i.source != safe]
+    removed = len(state.playlist.items) - len(kept)
+    if removed:
+        state.playlist.items = kept
+        state.index = 0
+        state.save_playlist()
+    boards = (_dashboard.get("view_data") or {}).get("boards") or {}
+    cleared = [k for k, v in boards.items() if v == f"/media/{safe}"]
+    if cleared:
+        for k in cleared:
+            del boards[k]
+        tmp = DASHBOARD_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(_dashboard, indent=2))
+        tmp.replace(DASHBOARD_FILE)  # atomic
+    state.bump()
+    return {"ok": True, "playlist_removed": removed, "boards_cleared": len(cleared)}
+
+
+class RenameMediaRequest(BaseModel):
+    new_name: str  # base name without extension; extension is preserved
+
+
+@app.post("/api/media/{name}/rename")
+async def rename_media(name: str, req: RenameMediaRequest):
+    safe = Path(name).name
+    src = MEDIA_DIR / safe
+    if not src.exists():
+        raise HTTPException(404, "Not found")
+    base = req.new_name.strip()
+    if not base or len(base) > 100 or "/" in base or "\\" in base or ".." in base:
+        raise HTTPException(400, "Invalid name")
+    new_full = base + src.suffix.lower()
+    if new_full == safe:
+        return {"ok": True, "name": safe}
+    dest = MEDIA_DIR / new_full
+    if dest.exists():
+        raise HTTPException(409, "A file with that name already exists")
+    src.rename(dest)
+    # media is referenced by filename — rewrite playlist + dashboard so nothing breaks
+    changed = False
+    for i in state.playlist.items:
+        if i.source == safe:
+            i.source = new_full
+            changed = True
+    if changed:
+        state.save_playlist()
+    boards = (_dashboard.get("view_data") or {}).get("boards") or {}
+    if any(v == f"/media/{safe}" for v in boards.values()):
+        for k, v in boards.items():
+            if v == f"/media/{safe}":
+                boards[k] = f"/media/{new_full}"
+        tmp = DASHBOARD_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(_dashboard, indent=2))
+        tmp.replace(DASHBOARD_FILE)  # atomic
+    state.bump()
+    return {"ok": True, "name": new_full}
+
+
 @app.post("/api/show-now")
 async def show_now(req: ShowNowRequest):
     if req.type in ("image", "video") and not (MEDIA_DIR / Path(req.source).name).exists():
