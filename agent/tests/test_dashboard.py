@@ -1,9 +1,17 @@
 import time
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 import main
 
 client = TestClient(main.app)
+
+
+def test_agent_import_uses_test_data_dir(agent_module):
+    repository_data = Path(__file__).resolve().parents[1] / "data"
+    assert agent_module.DATA_DIR != repository_data
+    assert agent_module.DASHBOARD_FILE.parent == agent_module.DATA_DIR
 
 @pytest.fixture(autouse=True)
 def _reset_dashboard_state():
