@@ -26,7 +26,21 @@ public partial class SignageWindow : Window
     {
         public PiSignage.Signage.SavedDevice Device { get; init; } = null!;
         public ControlContext? ControlContext { get; init; }
-        public bool Checked { get; set; }
+        public bool WasRequested { get; init; }
+        bool _checked;
+        public bool Checked
+        {
+            get => _checked;
+            set => _checked = CanControl && value;
+        }
+        public bool CanControl => ControlContext is not null;
+        public bool PairingRequiredSelection => WasRequested && !CanControl;
+        public string DisplayLabel => CanControl
+            ? Device.Name
+            : $"{Device.Name} — Pair this Pi";
+        public string ControlHint => CanControl
+            ? "Send captures and the round timer to this TV"
+            : "Pair this Pi to this laptop before it can receive updates";
     }
     List<TvChoice> _tvs = new();
 
@@ -61,22 +75,31 @@ public partial class SignageWindow : Window
     // name immediately, keeping the same TVs ticked.
     public void RefreshDevices()
     {
-        var checkedDevices = _tvs.Where(t => t.Checked).Select(t => t.Device).ToList();
+        var requestedDevices = _tvs
+            .Where(t => t.Checked || t.PairingRequiredSelection)
+            .Select(t => t.Device)
+            .ToList();
         var keepIds = new HashSet<string>(
-            checkedDevices.Where(d => !string.IsNullOrWhiteSpace(d.DeviceId))
+            requestedDevices.Where(d => !string.IsNullOrWhiteSpace(d.DeviceId))
                 .Select(d => d.DeviceId),
             StringComparer.Ordinal);
         var keepLegacyHosts = new HashSet<string>(
-            checkedDevices.Where(d => string.IsNullOrWhiteSpace(d.DeviceId))
+            requestedDevices.Where(d => string.IsNullOrWhiteSpace(d.DeviceId))
                 .Select(d => d.Hostname),
             StringComparer.OrdinalIgnoreCase);
         var saved = new PiSignage.Signage.DeviceStore().Load();
-        _tvs = saved.Select(d => new TvChoice {
-            Device = d,
-            ControlContext = TryControlContext(d.DeviceId),
-            Checked = !string.IsNullOrWhiteSpace(d.DeviceId)
+        _tvs = saved.Select(d =>
+        {
+            var requested = !string.IsNullOrWhiteSpace(d.DeviceId)
                 ? keepIds.Contains(d.DeviceId)
-                : keepLegacyHosts.Contains(d.Hostname),
+                : keepLegacyHosts.Contains(d.Hostname);
+            return new TvChoice
+            {
+                Device = d,
+                ControlContext = TryControlContext(d.DeviceId),
+                WasRequested = requested,
+                Checked = requested,
+            };
         }).ToList();
         TvList.ItemsSource = _tvs;
         UpdateActionButtons();
@@ -101,15 +124,28 @@ public partial class SignageWindow : Window
                 wantedLegacy.Add(App.Settings.LastDeviceHostname!);
             }
         }
-        _tvs = saved.Select(d => new TvChoice {
-            Device = d,
-            ControlContext = TryControlContext(d.DeviceId),
-            Checked = wantedIds.Count > 0
+        _tvs = saved.Select(d =>
+        {
+            var requested = wantedIds.Count > 0
                 ? !string.IsNullOrWhiteSpace(d.DeviceId) &&
                   wantedIds.Contains(d.DeviceId)
-                : wantedLegacy!.Contains(d.Hostname),
+                : wantedLegacy!.Contains(d.Hostname);
+            return new TvChoice
+            {
+                Device = d,
+                ControlContext = TryControlContext(d.DeviceId),
+                WasRequested = requested,
+                Checked = requested,
+            };
         }).ToList();
-        if (_tvs.Count > 0 && !_tvs.Any(t => t.Checked)) _tvs[0].Checked = true;  // sane default: first TV
+        if (_tvs.Count > 0 &&
+            !_tvs.Any(t => t.Checked) &&
+            !_tvs.Any(t => t.PairingRequiredSelection))
+        {
+            var firstControllable = _tvs.FirstOrDefault(t => t.CanControl);
+            if (firstControllable is not null)
+                firstControllable.Checked = true;
+        }
         TvList.ItemsSource = _tvs;
         UpdateActionButtons();
         TxtMinutes.Text = App.Settings.TimerMinutes.ToString();
@@ -140,7 +176,12 @@ public partial class SignageWindow : Window
 
     void SaveSession()
     {
-        var selected = _tvs.Where(t => t.Checked).Select(t => t.Device).ToList();
+        // Preserve a remembered selection that is temporarily unavailable.
+        // After pairing, RefreshDevices restores it by the same immutable ID.
+        var selected = _tvs
+            .Where(t => t.Checked || t.PairingRequiredSelection)
+            .Select(t => t.Device)
+            .ToList();
         App.Settings.SignageDeviceIds = selected
             .Where(d => !string.IsNullOrWhiteSpace(d.DeviceId))
             .Select(d => d.DeviceId)
@@ -330,8 +371,26 @@ public partial class SignageWindow : Window
     void UpdateActionButtons()
     {
         bool any = Targets.Any();
-        NoTvHint.Visibility = any ? Visibility.Collapsed : Visibility.Visible;
+        var pairingRequired = _tvs
+            .Where(t => t.PairingRequiredSelection)
+            .Select(t => t.Device.Name)
+            .ToList();
+        if (pairingRequired.Count > 0)
+        {
+            NoTvHint.Text =
+                $"Pair this Pi before controlling {string.Join(", ", pairingRequired)}. " +
+                "It will not receive updates until paired.";
+            NoTvHint.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            NoTvHint.Text = "Tick at least one TV above.";
+            NoTvHint.Visibility =
+                any ? Visibility.Collapsed : Visibility.Visible;
+        }
         BtnStart.IsEnabled = BtnStop.IsEnabled = any;
+        foreach (var preset in Presets.Children.OfType<Button>())
+            preset.IsEnabled = any;
         BtnRecapture.IsEnabled = any && _lastRegion is not null;
         BtnCapture.IsEnabled = BtnPin.IsEnabled = BtnBack.IsEnabled = any;
         BtnNextRound.IsEnabled = any;

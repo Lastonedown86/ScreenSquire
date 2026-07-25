@@ -32,10 +32,11 @@ public static class AgentUpdater
         TimeSpan? timeout = null, TimeSpan? pollDelay = null,
         CancellationToken ct = default)
     {
+        var normalizedBaseUrl = baseUrl.TrimEnd('/');
         using var form = new MultipartFormDataContent { { new ByteArrayContent(zip), "file", "agent-update.zip" } };
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
-            $"{baseUrl.TrimEnd('/')}/api/update")
+            $"{normalizedBaseUrl}/api/update")
         {
             Content = form,
         };
@@ -55,7 +56,10 @@ public static class AgentUpdater
             await Task.Delay(delay, ct);
             try
             {
-                using var doc = JsonDocument.Parse(await http.GetStringAsync($"{baseUrl}/api/status", ct));
+                using var doc = JsonDocument.Parse(
+                    await http.GetStringAsync(
+                        $"{normalizedBaseUrl}/api/status",
+                        ct));
                 if (doc.RootElement.TryGetProperty("agent_version", out var v) &&
                     v.GetString() == expectedVersion)
                     return;

@@ -340,6 +340,8 @@ public partial class MainWindow : Window
         wizard.ShowDialog();   // modal: no concurrent device-file writes
         Activate();
         ReloadDevices();   // show the newly-provisioned Pi
+        foreach (var window in OwnedWindows.OfType<SignageWindow>())
+            window.RefreshDevices();
 
         // Close the loop: land the client connected to the Pi they just set up.
         if (wizard.NewDeviceId != null)
