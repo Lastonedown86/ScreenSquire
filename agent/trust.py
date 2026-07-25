@@ -18,6 +18,16 @@ from pathlib import Path
 from typing import Any
 
 
+_PATH_LOCKS_GUARD = threading.Lock()
+_PATH_LOCKS: dict[Path, threading.RLock] = {}
+
+
+def _path_lock(path: Path) -> threading.RLock:
+    key = path.resolve()
+    with _PATH_LOCKS_GUARD:
+        return _PATH_LOCKS.setdefault(key, threading.RLock())
+
+
 def _b64(value: bytes) -> str:
     return base64.b64encode(value).decode("ascii")
 
@@ -64,17 +74,20 @@ class PairingGuard:
 class TrustStore:
     def __init__(self, path: Path):
         self.path = Path(path)
-        self._lock = threading.RLock()
+        self._lock = _path_lock(self.path)
         self._guard = PairingGuard()
-        self._data = self._read() if self.path.exists() else None
+        with self._lock:
+            self._data = self._read() if self.path.exists() else None
 
     @property
     def device_id(self) -> str:
-        return self._require_data()["device_id"]
+        with self._lock:
+            return self._reload()["device_id"]
 
     @property
     def controller_id(self) -> str | None:
-        return self._require_data()["controller_id"]
+        with self._lock:
+            return self._reload()["controller_id"]
 
     def initialize(self) -> str:
         with self._lock:
@@ -98,7 +111,7 @@ class TrustStore:
         with self._lock:
             now = time.monotonic()
             self._guard.check(now)
-            data = self._require_data()
+            data = self._reload()
             salt = _unb64(data["pin_salt"])
             valid_format = (
                 isinstance(pin, str)
@@ -127,7 +140,7 @@ class TrustStore:
 
     def controller_secret(self, controller_id: str) -> bytes | None:
         with self._lock:
-            data = self._require_data()
+            data = self._reload()
             if data["controller_id"] != controller_id:
                 return None
             encoded = data["controller_secret"]
@@ -135,7 +148,7 @@ class TrustStore:
 
     def accept_counter(self, controller_id: str, counter: int) -> bool:
         with self._lock:
-            data = self._require_data()
+            data = self._reload()
             if (
                 data["controller_id"] != controller_id
                 or type(counter) is not int
@@ -149,7 +162,7 @@ class TrustStore:
 
     def clear_controller(self) -> None:
         with self._lock:
-            data = self._require_data()
+            data = self._reload()
             updated = {
                 **data,
                 "controller_id": None,
@@ -163,6 +176,10 @@ class TrustStore:
         if self._data is None:
             raise RuntimeError("Trust is not initialized")
         return self._data
+
+    def _reload(self) -> dict[str, Any]:
+        self._data = self._read() if self.path.exists() else None
+        return self._require_data()
 
     def _read(self) -> dict[str, Any]:
         with self.path.open("r", encoding="utf-8") as handle:
@@ -183,7 +200,6 @@ class TrustStore:
                 os.fsync(handle.fileno())
             os.chmod(temporary_path, 0o600)
             os.replace(temporary_path, self.path)
-            os.chmod(self.path, 0o600)
             self._sync_parent_directory()
         except BaseException:
             temporary_path.unlink(missing_ok=True)

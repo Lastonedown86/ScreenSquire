@@ -1,7 +1,11 @@
 import json
 import os
+import re
 import stat
+import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -58,7 +62,10 @@ def test_initialize_writes_private_file_with_expected_shape(tmp_path, monkeypatc
     assert data["controller_id"] is None
     assert data["controller_secret"] is None
     assert data["last_counter"] == 0
-    assert chmod_calls[-1] == (path, 0o600)
+    assert len(chmod_calls) == 1
+    assert chmod_calls[0][0].parent == path.parent
+    assert chmod_calls[0][0] != path
+    assert chmod_calls[0][1] == 0o600
     if os.name != "nt":
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert list(path.parent.iterdir()) == [path]
@@ -119,6 +126,83 @@ def test_counter_must_increase_and_survives_reload(tmp_path):
     assert reloaded.accept_counter("store", 5)
 
 
+def test_two_instances_cannot_resurrect_revoked_controller_or_stale_counter(tmp_path):
+    path = tmp_path / "trust.json"
+    first = TrustStore(path)
+    pin = first.initialize()
+    first.pair(pin, "old-controller")
+    stale = TrustStore(path)
+
+    first.clear_controller()
+
+    assert stale.controller_secret("old-controller") is None
+    assert not stale.accept_counter("old-controller", 1)
+    assert TrustStore(path).controller_id is None
+
+    first.pair(pin, "store")
+    counter_four = TrustStore(path)
+    counter_five = TrustStore(path)
+    assert counter_four.accept_counter("store", 4)
+    assert not counter_five.accept_counter("store", 3)
+    assert counter_five.accept_counter("store", 5)
+    assert not counter_four.accept_counter("store", 4)
+
+
+def test_two_instances_serialize_concurrent_counter_writes(tmp_path):
+    path = tmp_path / "trust.json"
+    store = TrustStore(path)
+    pin = store.initialize()
+    store.pair(pin, "store")
+    low = TrustStore(path)
+    high = TrustStore(path)
+    low_entered_save = threading.Event()
+    high_finished_save = threading.Event()
+    real_low_save = low._save
+    real_high_save = high._save
+
+    def delayed_low_save(data):
+        low_entered_save.set()
+        high_finished_save.wait(timeout=0.25)
+        real_low_save(data)
+
+    def tracked_high_save(data):
+        real_high_save(data)
+        high_finished_save.set()
+
+    low._save = delayed_low_save
+    high._save = tracked_high_save
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        low_result = executor.submit(low.accept_counter, "store", 1)
+        assert low_entered_save.wait(timeout=1)
+        high_result = executor.submit(high.accept_counter, "store", 2)
+        assert low_result.result(timeout=2)
+        assert high_result.result(timeout=2)
+
+    assert not TrustStore(path).accept_counter("store", 2)
+
+
+def test_failed_precommit_chmod_keeps_disk_and_memory_in_sync(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "trust.json"
+    store = TrustStore(path)
+    pin = store.initialize()
+    store.pair(pin, "store")
+    assert store.accept_counter("store", 3)
+
+    monkeypatch.setattr(
+        trust.os,
+        "chmod",
+        lambda *_args: (_ for _ in ()).throw(PermissionError("denied")),
+    )
+    with pytest.raises(PermissionError, match="denied"):
+        store.accept_counter("store", 4)
+    monkeypatch.undo()
+
+    assert TrustStore(path).accept_counter("store", 4)
+    assert not store.accept_counter("store", 4)
+
+
 def test_sixth_pairing_attempt_is_blocked_until_sixty_seconds(monkeypatch, tmp_path):
     now = [100.0]
     monkeypatch.setattr(trust.time, "monotonic", lambda: now[0])
@@ -137,3 +221,24 @@ def test_sixth_pairing_attempt_is_blocked_until_sixty_seconds(monkeypatch, tmp_p
     now[0] += 60
     result = store.pair(pin, "store")
     assert len(result.secret) == 32
+
+
+def test_cli_prints_pin_once_and_repeat_does_not_reveal_it(tmp_path):
+    script = Path(trust.__file__).resolve()
+    command = [
+        sys.executable,
+        str(script),
+        "init",
+        "--data-dir",
+        str(tmp_path),
+    ]
+
+    first = subprocess.run(command, capture_output=True, text=True, check=True)
+
+    assert re.fullmatch(r"RECOVERY_PIN=\d{8}\n", first.stdout)
+    assert first.stderr == ""
+
+    repeat = subprocess.run(command, capture_output=True, text=True)
+
+    assert repeat.returncode != 0
+    assert not re.search(r"RECOVERY_PIN=\d{8}", repeat.stdout + repeat.stderr)
