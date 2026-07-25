@@ -22,15 +22,22 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
             <TextBlock x:Name="Step2Head" Grid.Row="0" Text="2. Choose your WiFi network" FontWeight="SemiBold" Margin="0,0,0,6"/>
             <DockPanel Grid.Row="1" Margin="0,0,0,6">
+                <TextBlock Text="8-digit PIN" Width="120" VerticalAlignment="Center"/>
+                <PasswordBox x:Name="TxtRecoveryPin" MaxLength="8"
+                             PasswordChanged="Field_Changed"
+                             ToolTip="Printed on the bottom of the Pi"/>
+            </DockPanel>
+            <DockPanel Grid.Row="2" Margin="0,0,0,6">
                 <TextBlock Text="Network name" Width="120" VerticalAlignment="Center"/>
                 <!-- pre-filled from nearby networks; typing still works if the list is empty -->
                 <ComboBox x:Name="CmbSsid" IsEditable="True" IsTextSearchEnabled="False"
                           ToolTip="Pick your WiFi network — the same one this computer uses"/>
             </DockPanel>
-            <DockPanel Grid.Row="2" Margin="0,0,0,10">
+            <DockPanel Grid.Row="3" Margin="0,0,0,10">
                 <TextBlock Text="Password" Width="120" VerticalAlignment="Center"/>
                 <CheckBox x:Name="ChkShow" Content="Show" DockPanel.Dock="Right" VerticalAlignment="Center"
                           Margin="8,0,0,0" Checked="ChkShow_Changed" Unchecked="ChkShow_Changed"/>
@@ -39,7 +46,7 @@
                     <TextBox x:Name="TxtPassPlain" Visibility="Collapsed" TextChanged="Field_Changed"/>
                 </Grid>
             </DockPanel>
-            <Button Grid.Row="3" x:Name="BtnConnect" Content="Connect to WiFi" Style="{StaticResource PrimaryButton}"
+            <Button Grid.Row="4" x:Name="BtnConnect" Content="Connect to WiFi" Style="{StaticResource PrimaryButton}"
                     Click="Connect_Click" IsEnabled="False" HorizontalAlignment="Left"/>
         </Grid>
 

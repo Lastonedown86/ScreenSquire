@@ -13,12 +13,16 @@ public class DeviceStoreTests
         try
         {
             var store = new DeviceStore(path);
-            store.Save(new[] { new SavedDevice { Name = "Front TV", Hostname = "pisignage1", Ip = "192.168.0.58" } });
+            store.Save(new[] { new SavedDevice {
+                DeviceId = "device-id", Name = "Front TV", Hostname = "pisignage1",
+                Ip = "192.168.0.58", Port = 9123 } });
             var got = store.Load();
             Assert.Single(got);
+            Assert.Equal("device-id", got[0].DeviceId);
             Assert.Equal("Front TV", got[0].Name);
             Assert.Equal("pisignage1", got[0].Hostname);
             Assert.Equal("192.168.0.58", got[0].Ip);
+            Assert.Equal(9123, got[0].Port);
         }
         finally { System.IO.File.Delete(path); }
     }
@@ -54,5 +58,28 @@ public class DeviceStoreTests
         var list = new List<SavedDevice> { new() { Name = "Front TV", Hostname = "pisignage1", Ip = "192.168.0.58" } };
         list = DeviceStore.Upsert(list, new SavedDevice { Name = "pisignage2", Hostname = "pisignage2", Ip = "192.168.0.71" });
         Assert.Equal(2, list.Count);
+    }
+
+    [Fact]
+    public void Upsert_matches_stable_device_id_and_updates_discovered_port()
+    {
+        var list = new List<SavedDevice> {
+            new() {
+                DeviceId = "device-id", Name = "Front TV", Hostname = "old-name",
+                Ip = "192.168.0.58", Port = 8080
+            }
+        };
+
+        list = DeviceStore.Upsert(list, new SavedDevice {
+            DeviceId = "device-id", Name = "", Hostname = "new-name",
+            Ip = "192.168.0.99", Port = 9123
+        });
+
+        var got = Assert.Single(list);
+        Assert.Equal("device-id", got.DeviceId);
+        Assert.Equal("Front TV", got.Name);
+        Assert.Equal("new-name", got.Hostname);
+        Assert.Equal("192.168.0.99", got.Ip);
+        Assert.Equal(9123, got.Port);
     }
 }

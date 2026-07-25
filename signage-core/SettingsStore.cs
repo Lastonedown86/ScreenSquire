@@ -29,6 +29,9 @@ public sealed class AppSettings
     // Checked TVs in the Tournament Signage window (hostnames). Replaces the
     // single SignageTarget, which is kept for migration of old settings files.
     public List<string> SignageTargets { get; set; } = new();
+    // Stable IDs are authoritative. SignageTargets remains only for migrating
+    // the builder's existing hostname-based local settings.
+    public List<string> SignageDeviceIds { get; set; } = new();
     // Capture boards shown in the board picker (display names as the client typed them).
     public List<string> Boards { get; set; } = new() { "pairings", "standings" };
 }

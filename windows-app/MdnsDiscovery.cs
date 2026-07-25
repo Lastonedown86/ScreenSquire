@@ -124,13 +124,13 @@ public static class MdnsDiscovery
             pos = rdStart + rdlen;
         }
 
-        if (instance != null)
+        if (instance != null && srvPort > 0)
         {
             var dev = new DiscoveredDevice
             {
                 Name = instance,
                 Address = aAddress ?? from.Address.ToString(),
-                Port = srvPort > 0 ? srvPort : 8080,
+                Port = srvPort,
             };
             found[$"{dev.Address}:{dev.Port}"] = dev;
         }

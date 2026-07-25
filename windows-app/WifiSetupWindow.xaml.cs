@@ -1,4 +1,6 @@
+using System.IO;
 using System.Net.Http;
+using System.Net.Http.Json;
 using System.Windows;
 using System.Windows.Media;
 using PiSignage.Signage;
@@ -8,17 +10,23 @@ namespace PiSignage.Control;
 public partial class WifiSetupWindow : Window
 {
     const string PiUsbBase = "http://10.55.0.1:8080";   // fixed USB-gadget address
-    readonly WifiProvisioner _wifi = new(new HttpClient { Timeout = TimeSpan.FromSeconds(45) });
+    readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(45) };
+    readonly WifiProvisioner _wifi;
+    readonly PairingClient _pairing;
+    readonly CredentialVault _vault = new(new DpapiSecretProtector());
     bool _detected;
     bool _cancelDetect;
 
     // Set on success so MainWindow can auto-connect to the freshly set-up Pi.
     public string? NewDeviceIp { get; private set; }
     public string? NewDeviceHostname { get; private set; }
+    public string? NewDeviceId { get; private set; }
 
     public WifiSetupWindow()
     {
         InitializeComponent();
+        _wifi = new WifiProvisioner(_http);
+        _pairing = new PairingClient(_http);
         // editable ComboBox has no TextChanged attribute — hook the routed event
         CmbSsid.AddHandler(System.Windows.Controls.Primitives.TextBoxBase.TextChangedEvent,
             new System.Windows.Controls.TextChangedEventHandler((s, e) => Field_Changed(s, e)));
@@ -136,7 +144,11 @@ public partial class WifiSetupWindow : Window
     }
 
     void Field_Changed(object s, RoutedEventArgs e)
-        => BtnConnect.IsEnabled = Ssid.Length > 0 && EffectivePassword.Length > 0;
+        => BtnConnect.IsEnabled =
+            TxtRecoveryPin.Password.Length == 8 &&
+            TxtRecoveryPin.Password.All(char.IsDigit) &&
+            Ssid.Length > 0 &&
+            EffectivePassword.Length > 0;
 
     async void Connect_Click(object s, RoutedEventArgs e)
     {
@@ -146,56 +158,117 @@ public partial class WifiSetupWindow : Window
         Result.Text = $"Sending your WiFi details to the Pi…";
         try
         {
-            var r = await _wifi.ConnectAsync(PiUsbBase, Ssid, EffectivePassword);
-            bool ok = r.Ok && r.Connected;
-            if (!ok)   // one confirming re-check in case connect returned before DHCP settled
+            var vaultData = _vault.Load();
+            var controllerId = vaultData.ControllerId;
+            var pairStatus = await _pairing.GetStatusAsync(PiUsbBase);
+            if (pairStatus.Paired &&
+                !string.Equals(
+                    pairStatus.ControllerId,
+                    controllerId,
+                    StringComparison.Ordinal))
             {
-                Result.Text = "Checking the Pi got online…";
-                await Task.Delay(3000);
-                var st = await _wifi.GetStatusAsync(PiUsbBase);
-                ok = st.Connected;
-                if (ok) r = new WifiResult { Ok = true, Connected = true, Ip = st.Ip };
+                var replace = MessageBox.Show(
+                    this,
+                    "Pair this Pi to this laptop?\n\n" +
+                    "The previous laptop will lose access. Continue only if you are setting up a replacement store laptop.",
+                    "Replace paired laptop",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+                if (replace != MessageBoxResult.Yes)
+                {
+                    Result.Text = "Setup cancelled. The Pi is still paired to the previous laptop.";
+                    Form.IsEnabled = true;
+                    return;
+                }
             }
+
+            string deviceId;
+            if (pairStatus.Paired &&
+                string.Equals(pairStatus.ControllerId, controllerId, StringComparison.Ordinal) &&
+                _vault.TryGet(pairStatus.DeviceId) is not null)
+            {
+                // A prior Wi-Fi attempt may have failed after pairing. Reuse the
+                // retained credential instead of consuming the PIN again.
+                deviceId = pairStatus.DeviceId;
+            }
+            else
+            {
+                Result.Text = "Pairing this Pi to this laptop over USB…";
+                var paired = await _pairing.PairAsync(
+                    PiUsbBase,
+                    TxtRecoveryPin.Password,
+                    controllerId);
+                if (!string.Equals(paired.ControllerId, controllerId, StringComparison.Ordinal))
+                    throw new InvalidDataException("The Pi returned the wrong controller identity.");
+                _vault.Put(paired.DeviceId, paired.Secret);
+                deviceId = paired.DeviceId;
+            }
+
+            Result.Text = "Sending your WiFi details to the paired Pi…";
+            var r = await _wifi.ConnectAsync(
+                PiUsbBase,
+                Ssid,
+                EffectivePassword,
+                _vault,
+                deviceId);
+
+            Result.Text = "Checking the Pi got online…";
+            var wifiStatus = await _wifi.GetStatusAsync(PiUsbBase);
+            if (!wifiStatus.Connected)
+            {
+                await Task.Delay(3000);
+                wifiStatus = await _wifi.GetStatusAsync(PiUsbBase);
+            }
+            var ok = wifiStatus.Connected;
             if (ok)
             {
+                var status = await _http.GetFromJsonAsync<StatusInfo>(
+                    PiUsbBase + "/api/status")
+                    ?? throw new InvalidDataException("The Pi returned an empty status.");
+                if (!string.Equals(status.DeviceId, deviceId, StringComparison.Ordinal))
+                    throw new InvalidDataException("The Pi identity changed during setup.");
+                var lanIp = wifiStatus.Ip ?? r.Ip;
+                if (string.IsNullOrWhiteSpace(lanIp))
+                    throw new InvalidDataException("The Pi connected but did not report its WiFi address.");
+
                 MarkDone(Step2Head);
                 MarkDone(Step3Head);
                 Result.Foreground = (Brush)FindResource("Success");
-                Result.Text = $"✓ Your Pi is online at {r.Ip}. You can unplug the cable — it's in your device list now.";
+                Result.Text = $"✓ Your Pi is online at {lanIp}. You can unplug the cable — it's in your device list now.";
 
-                // Always save the device — fall back to a placeholder name if the
-                // status call fails, so the new Pi never silently goes missing.
-                var piName = "New Pi";
-                try
-                {
-                    using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-                    var nameDoc = await http.GetStringAsync(PiUsbBase.TrimEnd('/') + "/api/status");
-                    using var doc = System.Text.Json.JsonDocument.Parse(nameDoc);
-                    piName = doc.RootElement.GetProperty("name").GetString() ?? piName;
-                }
-                catch { /* keep placeholder */ }
+                var piName = string.IsNullOrWhiteSpace(status.Name) ? "New Pi" : status.Name;
                 try
                 {
                     var store = new PiSignage.Signage.DeviceStore();
                     var list = PiSignage.Signage.DeviceStore.Upsert(store.Load(),
-                        new PiSignage.Signage.SavedDevice { Name = piName, Hostname = piName, Ip = r.Ip! });
+                        new PiSignage.Signage.SavedDevice {
+                            DeviceId = deviceId,
+                            Name = piName,
+                            Hostname = piName,
+                            Ip = lanIp,
+                            Port = new Uri(PiUsbBase).Port,
+                        });
                     store.Save(list);
-                    NewDeviceIp = r.Ip;
+                    NewDeviceIp = lanIp;
                     NewDeviceHostname = piName;
+                    NewDeviceId = deviceId;
                 }
                 catch { /* WiFi connect already succeeded; worst case the user runs Find my Pi */ }
             }
             else
             {
                 Result.Foreground = (Brush)FindResource("Error");
-                Result.Text = "Couldn't connect: " + (r.Error ?? "check the network name and password") + "  — Try again.";
+                Result.Text = "Couldn't connect: " +
+                    (r.Error ?? "check the network name and password") +
+                    " Pairing is saved — correct the WiFi details and try again.";
                 Form.IsEnabled = true;
             }
         }
         catch (Exception ex)
         {
             Result.Foreground = (Brush)FindResource("Error");
-            Result.Text = "Setup failed: " + ex.Message;
+            Result.Text = "Setup failed: " + ex.Message +
+                " If pairing succeeded, it is saved and the WiFi step can be retried.";
             Form.IsEnabled = true;
         }
         finally { Working.Visibility = Visibility.Collapsed; }

@@ -29,7 +29,9 @@ public partial class SignageWindow : Window
     List<TvChoice> _tvs = new();
 
     IEnumerable<PushTarget> Targets => _tvs.Where(t => t.Checked)
-        .Select(t => new PushTarget(t.Device.Name, $"http://{t.Device.Ip}:8080"));
+        .Select(t => new PushTarget(
+            t.Device.Name,
+            $"http://{t.Device.Ip}:{t.Device.Port}"));
 
     public SignageWindow()
     {
@@ -55,10 +57,22 @@ public partial class SignageWindow : Window
     // name immediately, keeping the same TVs ticked.
     public void RefreshDevices()
     {
-        var keep = new HashSet<string>(_tvs.Where(t => t.Checked).Select(t => t.Device.Hostname),
-                                       StringComparer.OrdinalIgnoreCase);
+        var checkedDevices = _tvs.Where(t => t.Checked).Select(t => t.Device).ToList();
+        var keepIds = new HashSet<string>(
+            checkedDevices.Where(d => !string.IsNullOrWhiteSpace(d.DeviceId))
+                .Select(d => d.DeviceId),
+            StringComparer.Ordinal);
+        var keepLegacyHosts = new HashSet<string>(
+            checkedDevices.Where(d => string.IsNullOrWhiteSpace(d.DeviceId))
+                .Select(d => d.Hostname),
+            StringComparer.OrdinalIgnoreCase);
         var saved = new PiSignage.Signage.DeviceStore().Load();
-        _tvs = saved.Select(d => new TvChoice { Device = d, Checked = keep.Contains(d.Hostname) }).ToList();
+        _tvs = saved.Select(d => new TvChoice {
+            Device = d,
+            Checked = !string.IsNullOrWhiteSpace(d.DeviceId)
+                ? keepIds.Contains(d.DeviceId)
+                : keepLegacyHosts.Contains(d.Hostname),
+        }).ToList();
         TvList.ItemsSource = _tvs;
         UpdateActionButtons();
     }
@@ -67,10 +81,28 @@ public partial class SignageWindow : Window
     // capture region per slot (so Re-capture works without re-dragging).
     void RestoreSession(System.Collections.Generic.List<PiSignage.Signage.SavedDevice> saved)
     {
-        var wanted = new HashSet<string>(App.Settings.SignageTargets, StringComparer.OrdinalIgnoreCase);
-        if (wanted.Count == 0 && !string.IsNullOrWhiteSpace(App.Settings.LastDeviceHostname))
-            wanted.Add(App.Settings.LastDeviceHostname!);
-        _tvs = saved.Select(d => new TvChoice { Device = d, Checked = wanted.Contains(d.Hostname) }).ToList();
+        var wantedIds = new HashSet<string>(
+            App.Settings.SignageDeviceIds,
+            StringComparer.Ordinal);
+        HashSet<string>? wantedLegacy = null;
+        if (wantedIds.Count == 0)
+        {
+            wantedLegacy = new HashSet<string>(
+                App.Settings.SignageTargets,
+                StringComparer.OrdinalIgnoreCase);
+            if (wantedLegacy.Count == 0 &&
+                !string.IsNullOrWhiteSpace(App.Settings.LastDeviceHostname))
+            {
+                wantedLegacy.Add(App.Settings.LastDeviceHostname!);
+            }
+        }
+        _tvs = saved.Select(d => new TvChoice {
+            Device = d,
+            Checked = wantedIds.Count > 0
+                ? !string.IsNullOrWhiteSpace(d.DeviceId) &&
+                  wantedIds.Contains(d.DeviceId)
+                : wantedLegacy!.Contains(d.Hostname),
+        }).ToList();
         if (_tvs.Count > 0 && !_tvs.Any(t => t.Checked)) _tvs[0].Checked = true;  // sane default: first TV
         TvList.ItemsSource = _tvs;
         UpdateActionButtons();
@@ -102,7 +134,15 @@ public partial class SignageWindow : Window
 
     void SaveSession()
     {
-        App.Settings.SignageTargets = _tvs.Where(t => t.Checked).Select(t => t.Device.Hostname).ToList();
+        var selected = _tvs.Where(t => t.Checked).Select(t => t.Device).ToList();
+        App.Settings.SignageDeviceIds = selected
+            .Where(d => !string.IsNullOrWhiteSpace(d.DeviceId))
+            .Select(d => d.DeviceId)
+            .ToList();
+        App.Settings.SignageTargets = selected
+            .Where(d => string.IsNullOrWhiteSpace(d.DeviceId))
+            .Select(d => d.Hostname)
+            .ToList();
         App.SaveSettings();
     }
 

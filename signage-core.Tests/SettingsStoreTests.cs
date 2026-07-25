@@ -19,6 +19,7 @@ public class SettingsStoreTests
                 SignageTarget = "pisignage2",
                 TimerMinutes = 40,
             };
+            s.SignageDeviceIds.Add("device-id");
             s.Windows["Main"] = new WindowPlacement { Left = 10, Top = 20, Width = 960, Height = 640 };
             s.Regions["pairings"] = new RegionRect { X = 1, Y = 2, W = 300, H = 200 };
             store.Save(s);
@@ -26,6 +27,7 @@ public class SettingsStoreTests
             var got = store.Load();
             Assert.Equal("pisignage1", got.LastDeviceHostname);
             Assert.Equal("pisignage2", got.SignageTarget);
+            Assert.Equal(new[] { "device-id" }, got.SignageDeviceIds);
             Assert.Equal(40, got.TimerMinutes);
             Assert.Equal(960, got.Windows["Main"].Width);
             Assert.Equal(300, got.Regions["pairings"].W);

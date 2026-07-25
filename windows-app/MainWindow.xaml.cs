@@ -17,6 +17,8 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<PlaylistItem> _playlist = new();
     private bool _dirty;
     private readonly PiSignage.Signage.DeviceStore _deviceStore = new();
+    private readonly PiSignage.Signage.CredentialVault _credentialVault =
+        new(new DpapiSecretProtector());
     private System.Collections.Generic.List<PiSignage.Signage.SavedDevice> _devices = new();
 
     public MainWindow()
@@ -70,7 +72,7 @@ public partial class MainWindow : Window
         {
             try
             {
-                using var probe = new ApiClient(d.Ip);
+                using var probe = new ApiClient(d.Ip, d.Port);
                 d.Online = await probe.GetStatusAsync() != null;
             }
             catch { d.Online = false; }
@@ -79,11 +81,17 @@ public partial class MainWindow : Window
 
     private void ReloadDevices()
     {
-        var keepHost = (CmbAddress.SelectedItem as PiSignage.Signage.SavedDevice)?.Hostname;
+        var selected = CmbAddress.SelectedItem as PiSignage.Signage.SavedDevice;
+        var keepId = selected?.DeviceId;
+        var keepHost = selected?.Hostname;
         _devices = _deviceStore.Load();
         CmbAddress.ItemsSource = _devices;
-        if (keepHost != null)
+        if (!string.IsNullOrWhiteSpace(keepId))
             CmbAddress.SelectedItem = _devices.FirstOrDefault(d =>
+                string.Equals(d.DeviceId, keepId, System.StringComparison.Ordinal));
+        else if (keepHost != null)
+            CmbAddress.SelectedItem = _devices.FirstOrDefault(d =>
+                string.IsNullOrWhiteSpace(d.DeviceId) &&
                 string.Equals(d.Hostname, keepHost, System.StringComparison.OrdinalIgnoreCase));
     }
 
@@ -107,16 +115,29 @@ public partial class MainWindow : Window
     // Try dev.Ip; on failure, re-resolve by hostname over mDNS, update Ip, retry.
     private async Task ConnectToDeviceAsync(PiSignage.Signage.SavedDevice dev)
     {
-        var status = await ConnectHostAsync(dev.Ip, 8080);
+        var endpointHost = dev.Ip;
+        var endpointPort = dev.Port;
+        var status = await ConnectHostAsync(endpointHost, endpointPort);
         if (status == null)
         {
             LblStatus.Text = $"{dev.Name} not at {dev.Ip} — searching…";
-            var newIp = await ResolveByHostnameAsync(dev.Hostname);
-            if (newIp != null)
+            var discovered = await ResolveDeviceAsync(dev);
+            if (discovered != null)
             {
-                status = await ConnectHostAsync(newIp, 8080);
-                if (status != null) { dev.Ip = newIp; SaveDevices(); }
+                endpointHost = discovered.Address;
+                endpointPort = discovered.Port;
+                status = await ConnectHostAsync(endpointHost, endpointPort);
             }
+        }
+        if (status != null)
+        {
+            dev.Ip = endpointHost;
+            dev.Port = endpointPort;
+            if (!string.IsNullOrWhiteSpace(status.DeviceId))
+                dev.DeviceId = status.DeviceId;
+            if (!string.IsNullOrWhiteSpace(status.Name))
+                dev.Hostname = status.Name;
+            SaveDevices();
         }
         if (status == null)
             Toaster.Show($"Couldn't reach {dev.Name}. Check it's powered on, then click Find my Pi.", ToastKind.Error);
@@ -132,7 +153,7 @@ public partial class MainWindow : Window
             _api?.Dispose();
             _api = new ApiClient(host, port);
             var status = await _api.GetStatusAsync() ?? throw new HttpRequestException("Empty response");
-            LblStatus.Text = $"Connected to {DisplayName(status.Name)}";
+            LblStatus.Text = $"Connected to {DisplayName(status)}";
             MainArea.IsEnabled = true;
             GettingStarted.Visibility = Visibility.Collapsed;
             _connectedHost = host;
@@ -205,8 +226,10 @@ public partial class MainWindow : Window
         catch { BtnKiosk.Content = "_TV display on/off"; }
     }
 
-    // Scan mDNS, GET /api/status on each, return the IP whose Pi name matches.
-    private async Task<string?> ResolveByHostnameAsync(string hostname)
+    // Scan mDNS and restore by immutable device ID. Hostname is used only for
+    // a legacy saved entry that does not have an ID yet.
+    private async Task<DiscoveredDevice?> ResolveDeviceAsync(
+        PiSignage.Signage.SavedDevice saved)
     {
         try
         {
@@ -217,8 +240,12 @@ public partial class MainWindow : Window
                 {
                     using var probe = new ApiClient(d.Address, d.Port);
                     var s = await probe.GetStatusAsync();
-                    if (s != null && string.Equals(s.Name, hostname, StringComparison.OrdinalIgnoreCase))
-                        return d.Address;
+                    var matches = !string.IsNullOrWhiteSpace(saved.DeviceId)
+                        ? s != null && string.Equals(
+                            s.DeviceId, saved.DeviceId, StringComparison.Ordinal)
+                        : s != null && string.Equals(
+                            s.Name, saved.Hostname, StringComparison.OrdinalIgnoreCase);
+                    if (matches) return d;
                 }
                 catch { }
             }
@@ -229,11 +256,18 @@ public partial class MainWindow : Window
 
     // Friendly name for a Pi: the saved device's name if we have one, else the
     // hostname the Pi reports. Keeps renames visible everywhere a name shows.
-    private string DisplayName(string hostname)
+    private string DisplayName(StatusInfo status)
     {
-        var dev = _devices.FirstOrDefault(d =>
-            string.Equals(d.Hostname, hostname, System.StringComparison.OrdinalIgnoreCase));
-        return string.IsNullOrWhiteSpace(dev?.Name) ? hostname : dev!.Name;
+        PiSignage.Signage.SavedDevice? dev = null;
+        if (!string.IsNullOrWhiteSpace(status.DeviceId))
+        {
+            dev = _devices.FirstOrDefault(d =>
+                string.Equals(d.DeviceId, status.DeviceId, StringComparison.Ordinal));
+        }
+        dev ??= _devices.FirstOrDefault(d =>
+            string.IsNullOrWhiteSpace(d.DeviceId) &&
+            string.Equals(d.Hostname, status.Name, StringComparison.OrdinalIgnoreCase));
+        return string.IsNullOrWhiteSpace(dev?.Name) ? status.Name : dev!.Name;
     }
 
     private async void BtnRename_Click(object sender, RoutedEventArgs e)
@@ -249,8 +283,8 @@ public partial class MainWindow : Window
         // reports to scans) match. If it's unreachable, the rename stays local.
         try
         {
-            using var api = new ApiClient(dev.Ip);
-            await api.SetNameAsync(name);
+            using var api = new ApiClient(dev.Ip, dev.Port);
+            await api.SetNameAsync(name, _credentialVault, dev.DeviceId);
             dev.Hostname = name;   // scans key devices by the Pi-reported name
             if (string.Equals(App.Settings.LastDeviceHostname, oldHostname, StringComparison.OrdinalIgnoreCase))
                 App.Settings.LastDeviceHostname = name;
@@ -291,10 +325,10 @@ public partial class MainWindow : Window
         ReloadDevices();   // show the newly-provisioned Pi
 
         // Close the loop: land the client connected to the Pi they just set up.
-        if (wizard.NewDeviceHostname != null)
+        if (wizard.NewDeviceId != null)
         {
             var dev = _devices.FirstOrDefault(d => string.Equals(
-                d.Hostname, wizard.NewDeviceHostname, System.StringComparison.OrdinalIgnoreCase));
+                d.DeviceId, wizard.NewDeviceId, System.StringComparison.Ordinal));
             if (dev != null)
             {
                 CmbAddress.SelectedItem = dev;
@@ -350,7 +384,7 @@ public partial class MainWindow : Window
             int ok = 0, skipped = 0; var failedNames = new List<string>();
             foreach (var dev in targets)
             {
-                var baseUrl = $"http://{dev.Ip}:8080";
+                var baseUrl = $"http://{dev.Ip}:{dev.Port}";
                 try
                 {
                     string? current = null;
@@ -433,7 +467,13 @@ public partial class MainWindow : Window
                     if (s != null && !string.IsNullOrWhiteSpace(s.Name))
                     {
                         _devices = PiSignage.Signage.DeviceStore.Upsert(_devices,
-                            new PiSignage.Signage.SavedDevice { Name = s.Name, Hostname = s.Name, Ip = d.Address });
+                            new PiSignage.Signage.SavedDevice {
+                                DeviceId = s.DeviceId,
+                                Name = s.Name,
+                                Hostname = s.Name,
+                                Ip = d.Address,
+                                Port = d.Port,
+                            });
                         foundCount++;
                     }
                 }
@@ -463,7 +503,7 @@ public partial class MainWindow : Window
             var s = await _api.GetStatusAsync();
             if (s == null) return;
             if (CmbAddress.SelectedItem is PiSignage.Signage.SavedDevice on) on.Online = true;
-            LblStatus.Text = $"Connected to {DisplayName(s.Name)}  •  {s.ScreensConnected} screen(s)"
+            LblStatus.Text = $"Connected to {DisplayName(s)}  •  {s.ScreensConnected} screen(s)"
                              + (s.OverrideActive ? "  •  showing a one-off item (not the playlist)" : "");
             LblNow.Text = s.NowShowing == null ? "" : s.NowShowing.Type switch
             {

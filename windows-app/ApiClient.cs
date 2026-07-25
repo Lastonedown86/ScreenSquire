@@ -1,7 +1,9 @@
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
 using System.Text.Json;
+using PiSignage.Signage;
 
 namespace PiSignage.Control;
 
@@ -16,7 +18,7 @@ public class ApiClient : IDisposable
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
-    public ApiClient(string host, int port = 8080)
+    public ApiClient(string host, int port)
     {
         BaseUrl = $"http://{host.Trim()}:{port}";
         _http = new HttpClient { BaseAddress = new Uri(BaseUrl), Timeout = TimeSpan.FromSeconds(8) };
@@ -99,9 +101,31 @@ public class ApiClient : IDisposable
         await ThrowIfError(resp);
     }
 
-    public async Task SetNameAsync(string name)
+    public async Task SetNameAsync(
+        string name,
+        CredentialVault vault,
+        string deviceId)
     {
-        var resp = await _http.PostAsJsonAsync("/api/name", new { name });
+        ArgumentNullException.ThrowIfNull(vault);
+        var credential = vault.TryGet(deviceId)
+            ?? throw new KeyNotFoundException(
+                $"No controller credential exists for device '{deviceId}'.");
+        var body = JsonSerializer.SerializeToUtf8Bytes(new { name }, JsonOpts);
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            new Uri(BaseUrl.TrimEnd('/') + "/api/name", UriKind.Absolute))
+        {
+            Content = new ByteArrayContent(body),
+        };
+        request.Content.Headers.ContentType =
+            new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+        ControlRequestSigner.Sign(
+            request,
+            vault.Load().ControllerId,
+            credential.Secret,
+            vault.TakeNextCounter(deviceId),
+            Convert.ToHexString(SHA256.HashData(body)).ToLowerInvariant());
+        using var resp = await _http.SendAsync(request);
         await ThrowIfError(resp);
     }
 

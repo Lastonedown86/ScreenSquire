@@ -8,6 +8,8 @@ namespace PiSignage.Control;
 public class StatusInfo
 {
     [JsonPropertyName("name")] public string Name { get; set; } = "";
+    [JsonPropertyName("device_id")] public string DeviceId { get; set; } = "";
+    [JsonPropertyName("paired")] public bool Paired { get; set; }
     [JsonPropertyName("version")] public string Version { get; set; } = "";
     [JsonPropertyName("screens_connected")] public int ScreensConnected { get; set; }
     [JsonPropertyName("playlist_items")] public int PlaylistItems { get; set; }
@@ -113,7 +115,7 @@ public class DiscoveredDevice
 {
     public string Name { get; set; } = "";
     public string Address { get; set; } = "";
-    public int Port { get; set; } = 8080;
+    public int Port { get; set; }
     public override string ToString() => $"{Name} ({Address}:{Port})";
 }
 
