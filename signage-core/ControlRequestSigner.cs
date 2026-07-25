@@ -19,15 +19,23 @@ public static class ControlRequestSigner
         string entityHash)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentException.ThrowIfNullOrWhiteSpace(controllerId);
+        ValidateControllerId(controllerId);
         ArgumentNullException.ThrowIfNull(secret);
-        ArgumentException.ThrowIfNullOrWhiteSpace(entityHash);
+        if (secret.Length != 32)
+            throw new ArgumentException("Controller secret must contain 32 bytes.", nameof(secret));
+        if (counter <= 0)
+            throw new ArgumentOutOfRangeException(nameof(counter), "Counter must be positive.");
+        ValidateEntityHash(entityHash);
 
         var requestUri = request.RequestUri
             ?? throw new ArgumentException("The request must have a URI.", nameof(request));
-        var pathAndQuery = requestUri.IsAbsoluteUri
-            ? requestUri.PathAndQuery
-            : WithoutFragment(requestUri.OriginalString);
+        if (!requestUri.IsAbsoluteUri)
+        {
+            throw new ArgumentException(
+                "The request URI must be absolute before signing.",
+                nameof(request));
+        }
+        var pathAndQuery = requestUri.PathAndQuery;
         var counterText = counter.ToString(CultureInfo.InvariantCulture);
         var canonical = string.Join(
             "\n",
@@ -49,13 +57,33 @@ public static class ControlRequestSigner
     static void SetHeader(HttpRequestMessage request, string name, string value)
     {
         request.Headers.Remove(name);
+        request.Content?.Headers.Remove(name);
         if (!request.Headers.TryAddWithoutValidation(name, value))
             throw new InvalidOperationException($"Could not set request header '{name}'.");
     }
 
-    static string WithoutFragment(string requestTarget)
+    static void ValidateControllerId(string controllerId)
     {
-        var fragmentIndex = requestTarget.IndexOf('#');
-        return fragmentIndex < 0 ? requestTarget : requestTarget[..fragmentIndex];
+        ArgumentException.ThrowIfNullOrWhiteSpace(controllerId);
+        if (controllerId.Length > 64 || controllerId.Any(char.IsControl))
+        {
+            throw new ArgumentException(
+                "Controller ID must be at most 64 characters and contain no control characters.",
+                nameof(controllerId));
+        }
+    }
+
+    static void ValidateEntityHash(string entityHash)
+    {
+        ArgumentNullException.ThrowIfNull(entityHash);
+        if (entityHash.Length != 64 || entityHash.Any(static c =>
+                !((c >= '0' && c <= '9') ||
+                  (c >= 'a' && c <= 'f') ||
+                  (c >= 'A' && c <= 'F'))))
+        {
+            throw new ArgumentException(
+                "Entity hash must be exactly 64 hexadecimal characters.",
+                nameof(entityHash));
+        }
     }
 }

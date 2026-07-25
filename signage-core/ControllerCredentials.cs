@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 namespace PiSignage.Signage;
@@ -14,6 +16,7 @@ public sealed record ControllerCredential(byte[] Secret, long NextCounter);
 public sealed class CredentialVaultData
 {
     public string ControllerId { get; set; } = Guid.NewGuid().ToString("N");
+    public long Revision { get; set; }
     public Dictionary<string, ControllerCredential> Devices { get; set; } = new();
 }
 
@@ -25,6 +28,7 @@ public sealed class CredentialVault
 
     readonly ISecretProtector _protector;
     readonly object _pathLock;
+    readonly string _mutexName;
 
     public CredentialVault(string path, ISecretProtector protector)
     {
@@ -34,6 +38,7 @@ public sealed class CredentialVault
         Path = System.IO.Path.GetFullPath(path);
         _protector = protector;
         _pathLock = PathLocks.GetOrAdd(Path, static _ => new object());
+        _mutexName = MutexName(Path);
     }
 
     public CredentialVault(ISecretProtector protector)
@@ -53,19 +58,25 @@ public sealed class CredentialVault
 
     public CredentialVaultData Load()
     {
-        lock (_pathLock)
-        {
-            return LoadOrCreate();
-        }
+        return WithVaultLock(LoadOrCreate);
     }
 
     public void Save(CredentialVaultData data)
     {
         ArgumentNullException.ThrowIfNull(data);
-        lock (_pathLock)
+        WithVaultLock(() =>
         {
-            SaveCore(data);
-        }
+            var current = LoadOrCreate();
+            if (data.Revision != current.Revision)
+            {
+                throw new InvalidOperationException(
+                    "Credential vault data is stale and cannot be saved.");
+            }
+
+            var saved = Copy(data, checked(data.Revision + 1));
+            SaveCore(saved);
+            data.Revision = saved.Revision;
+        });
     }
 
     public void Put(string deviceId, byte[] secret)
@@ -73,41 +84,41 @@ public sealed class CredentialVault
         ValidateDeviceId(deviceId);
         ArgumentNullException.ThrowIfNull(secret);
 
-        lock (_pathLock)
+        WithVaultLock(() =>
         {
             var data = LoadOrCreate();
             data.Devices[deviceId] = new ControllerCredential(secret.ToArray(), 1);
-            SaveCore(data);
-        }
+            SaveMutation(data);
+        });
     }
 
     public ControllerCredential? TryGet(string deviceId)
     {
         ValidateDeviceId(deviceId);
-        lock (_pathLock)
+        return WithVaultLock(() =>
         {
             var data = LoadOrCreate();
             return data.Devices.TryGetValue(deviceId, out var credential)
                 ? Copy(credential)
                 : null;
-        }
+        });
     }
 
     public void Remove(string deviceId)
     {
         ValidateDeviceId(deviceId);
-        lock (_pathLock)
+        WithVaultLock(() =>
         {
             var data = LoadOrCreate();
             if (data.Devices.Remove(deviceId))
-                SaveCore(data);
-        }
+                SaveMutation(data);
+        });
     }
 
     public long TakeNextCounter(string deviceId)
     {
         ValidateDeviceId(deviceId);
-        lock (_pathLock)
+        return WithVaultLock(() =>
         {
             var data = LoadOrCreate();
             if (!data.Devices.TryGetValue(deviceId, out var credential))
@@ -117,9 +128,9 @@ public sealed class CredentialVault
             var allocated = credential.NextCounter;
             var next = checked(allocated + 1);
             data.Devices[deviceId] = credential with { NextCounter = next };
-            SaveCore(data);
+            SaveMutation(data);
             return allocated;
-        }
+        });
     }
 
     CredentialVaultData LoadOrCreate()
@@ -151,6 +162,7 @@ public sealed class CredentialVault
         var temporaryPath = System.IO.Path.Combine(
             directory,
             $".{System.IO.Path.GetFileName(Path)}.{Guid.NewGuid():N}.tmp");
+        var committed = false;
 
         try
         {
@@ -166,17 +178,61 @@ public sealed class CredentialVault
                 stream.Flush(flushToDisk: true);
             }
             File.Move(temporaryPath, Path, overwrite: true);
+            committed = true;
         }
         finally
         {
-            File.Delete(temporaryPath);
+            if (!committed)
+                File.Delete(temporaryPath);
         }
     }
+
+    void SaveMutation(CredentialVaultData data)
+    {
+        data.Revision = checked(data.Revision + 1);
+        SaveCore(data);
+    }
+
+    T WithVaultLock<T>(Func<T> action)
+    {
+        lock (_pathLock)
+        {
+            using var mutex = new Mutex(initiallyOwned: false, _mutexName);
+            var ownsMutex = false;
+            try
+            {
+                try
+                {
+                    mutex.WaitOne();
+                    ownsMutex = true;
+                }
+                catch (AbandonedMutexException)
+                {
+                    ownsMutex = true;
+                }
+
+                return action();
+            }
+            finally
+            {
+                if (ownsMutex)
+                    mutex.ReleaseMutex();
+            }
+        }
+    }
+
+    void WithVaultLock(Action action) =>
+        WithVaultLock(() =>
+        {
+            action();
+            return true;
+        });
 
     static void ValidateData(CredentialVaultData? data)
     {
         if (data is null ||
             string.IsNullOrWhiteSpace(data.ControllerId) ||
+            data.Revision < 0 ||
             data.Devices is null)
         {
             throw new InvalidDataException("Credential vault data is invalid.");
@@ -196,6 +252,29 @@ public sealed class CredentialVault
 
     static ControllerCredential Copy(ControllerCredential credential) =>
         new(credential.Secret.ToArray(), credential.NextCounter);
+
+    static CredentialVaultData Copy(CredentialVaultData data, long revision) =>
+        new()
+        {
+            ControllerId = data.ControllerId,
+            Revision = revision,
+            Devices = data.Devices.ToDictionary(
+                pair => pair.Key,
+                pair => Copy(pair.Value),
+                StringComparer.Ordinal),
+        };
+
+    static string MutexName(string path)
+    {
+        var normalizedPath = OperatingSystem.IsWindows()
+            ? path.ToUpperInvariant()
+            : path;
+        var currentUser = $"{Environment.UserDomainName}\\{Environment.UserName}";
+        var key = Encoding.UTF8.GetBytes($"{currentUser}\n{normalizedPath}");
+        var hash = Convert.ToHexString(SHA256.HashData(key));
+        var scope = OperatingSystem.IsWindows() ? @"Local\" : "";
+        return $"{scope}PiSignage.CredentialVault.{hash}";
+    }
 
     static void ValidateDeviceId(string deviceId) =>
         ArgumentException.ThrowIfNullOrWhiteSpace(deviceId);

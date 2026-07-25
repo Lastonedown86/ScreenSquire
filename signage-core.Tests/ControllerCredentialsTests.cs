@@ -142,6 +142,83 @@ public class ControllerCredentialsTests
     }
 
     [Fact]
+    public void Save_rejects_stale_snapshot_instead_of_rolling_back_counter()
+    {
+        var path = TempFile();
+        var protector = new ReversibleTestProtector();
+        try
+        {
+            var vault = new CredentialVault(path, protector);
+            vault.Put("device-1", new byte[] { 1 });
+            var stale = vault.Load();
+
+            Assert.Equal(1, vault.TakeNextCounter("device-1"));
+            Assert.Throws<InvalidOperationException>(() => vault.Save(stale));
+
+            Assert.Equal(2, new CredentialVault(path, protector)
+                .TakeNextCounter("device-1"));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Save_rejects_stale_snapshot_instead_of_resurrecting_removed_device()
+    {
+        var path = TempFile();
+        var protector = new ReversibleTestProtector();
+        try
+        {
+            var vault = new CredentialVault(path, protector);
+            vault.Put("device-1", new byte[] { 1 });
+            var stale = vault.Load();
+
+            vault.Remove("device-1");
+            Assert.Throws<InvalidOperationException>(() => vault.Save(stale));
+
+            Assert.Null(new CredentialVault(path, protector).TryGet("device-1"));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Every_persisted_mutation_advances_the_vault_revision()
+    {
+        var path = TempFile();
+        var protector = new ReversibleTestProtector();
+        try
+        {
+            var vault = new CredentialVault(path, protector);
+            var editable = vault.Load();
+            Assert.Equal(0, editable.Revision);
+
+            vault.Put("device-1", new byte[] { 1 });
+            Assert.Equal(1, vault.Load().Revision);
+
+            vault.TakeNextCounter("device-1");
+            Assert.Equal(2, vault.Load().Revision);
+
+            vault.Remove("device-1");
+            Assert.Equal(3, vault.Load().Revision);
+
+            editable = vault.Load();
+            editable.Devices["device-2"] = new ControllerCredential(new byte[] { 2 }, 1);
+            vault.Save(editable);
+            Assert.Equal(4, editable.Revision);
+            Assert.Equal(4, vault.Load().Revision);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void Counter_is_not_returned_or_advanced_when_persistence_fails()
     {
         var path = TempFile();
@@ -157,6 +234,52 @@ public class ControllerCredentialsTests
             protector.FailProtection = false;
             Assert.Equal(1, new CredentialVault(path, protector)
                 .TakeNextCounter("device-1"));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Counter_overflow_does_not_change_persisted_credential()
+    {
+        var path = TempFile();
+        var protector = new ReversibleTestProtector();
+        try
+        {
+            var vault = new CredentialVault(path, protector);
+            var data = vault.Load();
+            data.Devices["device-1"] =
+                new ControllerCredential(new byte[] { 1 }, long.MaxValue);
+            vault.Save(data);
+
+            Assert.Throws<OverflowException>(() => vault.TakeNextCounter("device-1"));
+            Assert.Equal(
+                long.MaxValue,
+                new CredentialVault(path, protector).TryGet("device-1")!.NextCounter);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Put_and_try_get_do_not_alias_callers_secret_arrays()
+    {
+        var path = TempFile();
+        try
+        {
+            var vault = new CredentialVault(path, new ReversibleTestProtector());
+            var supplied = new byte[] { 1, 2, 3 };
+            vault.Put("device-1", supplied);
+
+            supplied[0] = 9;
+            var fetched = vault.TryGet("device-1")!;
+            fetched.Secret[1] = 9;
+
+            Assert.Equal(new byte[] { 1, 2, 3 }, vault.TryGet("device-1")!.Secret);
         }
         finally
         {
