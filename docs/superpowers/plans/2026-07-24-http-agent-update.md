@@ -722,7 +722,9 @@ git commit -m "feat(app): Update Pi software button — pushes bundled agent to 
 - [ ] **Step 1: Update README**
 
 - Replace any mention of ssh/scp-based agent deployment with: `deploy-agent.ps1` pushes over HTTP to `/api/update`; SSH is only needed once per Pi to bootstrap a pre-`/api/update` agent (and for venv/requirements changes, which stay manual).
-- In "Notes & known limits", extend the no-auth bullet: `/api/update` accepts agent code from anyone on the LAN — the phase-2 API token must cover it.
+- Historical requirement, now superseded: this task originally extended a
+  trusted-LAN warning for `/api/update`. The secure ownership lifecycle now
+  requires a signed controller request for every update.
 - Document the app behavior in the Windows app section: "The app carries the Pi software inside it. When a connected Pi is out of date, an **Update Pi software** button appears and updates every reachable Pi."
 
 - [ ] **Step 2: Commit**
