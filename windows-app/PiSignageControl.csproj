@@ -19,7 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="..\agent\main.py" LogicalName="agent/main.py" />
+    <EmbeddedResource Include="..\agent\*.py" LogicalName="agent/%(Filename)%(Extension)" />
     <EmbeddedResource Include="..\agent\static\**\*" LogicalName="agent/static/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 

@@ -595,7 +595,11 @@ async def set_kiosk(req: KioskRequest):
 
 
 # ---- self-update (pushed from the control app / deploy script; no SSH) ----
+_UPDATE_MAX_COMPRESSED_BYTES = 20 * 1024 * 1024
 _UPDATE_MAX_BYTES = 20 * 1024 * 1024
+_UPDATE_ROOT_FILES = frozenset(
+    {"main.py", "trust.py", "control_auth.py", "delivery_reset.py"}
+)
 _VERSION_RE = re.compile(r'AGENT_VERSION\s*=\s*"([^"]+)"')
 _restart_task: Optional[asyncio.Task] = None  # strong ref: keep the restart task from being GC'd
 
@@ -617,6 +621,8 @@ async def update_agent(
     await verify_uploaded_entity(file, control.entity_sha256)
     accept_uploaded_counter(control, trust_store)
     data = await file.read()
+    if len(data) > _UPDATE_MAX_COMPRESSED_BYTES:
+        raise HTTPException(400, "Compressed update is too large")
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile:
@@ -632,7 +638,7 @@ async def update_agent(
             if name != "static/" and not name.startswith("static/"):
                 raise HTTPException(400, f"Unexpected folder in update: {name}")
             continue
-        if name != "main.py" and not name.startswith("static/"):
+        if name not in _UPDATE_ROOT_FILES and not name.startswith("static/"):
             raise HTTPException(400, f"Unexpected file in update: {name}")
         total += info.file_size
     if total > _UPDATE_MAX_BYTES:
@@ -643,10 +649,14 @@ async def update_agent(
     tmp = Path(tempfile.mkdtemp(prefix="update-tmp-", dir=APP_DIR))
     try:
         zf.extractall(tmp)  # safe: every entry name validated above
-        try:
-            py_compile.compile(str(tmp / "main.py"), doraise=True)
-        except py_compile.PyCompileError as e:
-            raise HTTPException(400, f"New main.py won't run (syntax error): {e}")
+        for module_name in sorted(_UPDATE_ROOT_FILES.intersection(zf.namelist())):
+            try:
+                py_compile.compile(str(tmp / module_name), doraise=True)
+            except py_compile.PyCompileError as e:
+                raise HTTPException(
+                    400,
+                    f"New {module_name} won't run (syntax error): {e}",
+                )
 
         m = _VERSION_RE.search((tmp / "main.py").read_text())
         new_version = m.group(1) if m else "unknown"
@@ -655,11 +665,16 @@ async def update_agent(
         backup = APP_DIR / "update-backup"
         shutil.rmtree(backup, ignore_errors=True)
         backup.mkdir()
-        shutil.copy2(APP_DIR / "main.py", backup / "main.py")
+        for module_name in sorted(_UPDATE_ROOT_FILES):
+            installed_module = APP_DIR / module_name
+            if installed_module.exists():
+                shutil.copy2(installed_module, backup / module_name)
         if (APP_DIR / "static").exists():
             shutil.copytree(APP_DIR / "static", backup / "static")
 
-        os.replace(tmp / "main.py", APP_DIR / "main.py")  # atomic — tmp is on APP_DIR's filesystem
+        for module_name in sorted(_UPDATE_ROOT_FILES.intersection(zf.namelist())):
+            # atomic — tmp is on APP_DIR's filesystem
+            os.replace(tmp / module_name, APP_DIR / module_name)
         if (tmp / "static").exists():
             shutil.copytree(tmp / "static", APP_DIR / "static", dirs_exist_ok=True)
     finally:
