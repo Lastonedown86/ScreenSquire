@@ -207,6 +207,7 @@ public partial class MainWindow : Window
         bool isSaved = CmbAddress.SelectedItem is PiSignage.Signage.SavedDevice;
         if (BtnRename != null) BtnRename.IsEnabled = isSaved;
         if (BtnForget != null) BtnForget.IsEnabled = isSaved;
+        if (BtnPrepareDelivery != null) BtnPrepareDelivery.IsEnabled = isSaved;
     }
 
     private void CmbAddress_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -353,6 +354,108 @@ public partial class MainWindow : Window
                 CmbAddress.SelectedItem = dev;
                 await ConnectToDeviceAsync(dev);
             }
+        }
+    }
+
+    private async void BtnPrepareDelivery_Click(object sender, RoutedEventArgs e)
+    {
+        if (CmbAddress.SelectedItem is not PiSignage.Signage.SavedDevice device)
+        {
+            Toaster.Show("Pick the saved Pi you are preparing for delivery first.");
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(device.DeviceId))
+        {
+            Toaster.Show(
+                "This saved Pi has no stable identity. Pair it over USB before preparing it for delivery.",
+                ToastKind.Warning);
+            return;
+        }
+
+        const string warning =
+            "Prepare this Pi for delivery?\n\n" +
+            "This permanently removes your control access, Wi-Fi, media, playlists,\n" +
+            "tournament screens, timer, and temporary name. The client will need the\n" +
+            "8-digit PIN sticker to set it up.";
+        if (MessageBox.Show(
+                this,
+                warning,
+                "Prepare Pi for delivery",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        var confirmation = TextPrompt.Ask(
+            this,
+            "Type PREPARE to permanently erase this Pi:",
+            "",
+            "Prepare Pi for delivery");
+        if (!string.Equals(confirmation, "PREPARE", StringComparison.Ordinal))
+        {
+            if (confirmation is not null)
+            {
+                Toaster.Show(
+                    "Nothing was erased. Type PREPARE exactly to continue.",
+                    ToastKind.Warning);
+            }
+            return;
+        }
+
+        BtnPrepareDelivery.IsEnabled = false;
+        SetBusy(true);
+        try
+        {
+            var context = ControlContext(device.DeviceId);
+            using var http = new HttpClient
+            {
+                Timeout = TimeSpan.FromSeconds(15),
+            };
+            var operations = new WindowsDeliveryPreparationOperations(
+                http,
+                _credentialVault,
+                _deviceStore,
+                new PiSignage.Signage.SettingsStore(),
+                App.Settings,
+                ThumbnailCache.ClearDevice);
+            await new DeliveryPreparation(operations).RunAsync(device, context);
+
+            if (string.Equals(
+                    _connectedControlContext?.DeviceId,
+                    device.DeviceId,
+                    StringComparison.Ordinal))
+            {
+                _poll.Stop();
+                _api?.Dispose();
+                _api = null;
+                _connectedControlContext = null;
+                _connectedHost = null;
+                MainArea.IsEnabled = false;
+                GettingStarted.Visibility = Visibility.Visible;
+                BtnKiosk.IsEnabled = BtnRemote.IsEnabled = false;
+                BtnKiosk.Content = "_TV display on/off";
+                LblStatus.Text = "Not connected — follow the steps above";
+            }
+
+            ReloadDevices();
+            foreach (var window in OwnedWindows.OfType<SignageWindow>())
+                window.RefreshDevices();
+            Toaster.Show(
+                "Ready for delivery — unplug the USB cable.",
+                ToastKind.Success);
+        }
+        catch (Exception ex)
+        {
+            Toaster.Show(
+                "The Pi was not prepared for delivery: " + ex.Message,
+                ToastKind.Error);
+        }
+        finally
+        {
+            SetBusy(false);
+            BtnPrepareDelivery.IsEnabled =
+                CmbAddress.SelectedItem is PiSignage.Signage.SavedDevice;
         }
     }
 

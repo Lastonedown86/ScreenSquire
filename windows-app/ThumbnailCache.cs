@@ -1,6 +1,7 @@
 using System.IO;
 using System.Net.Http;
 using System.Windows.Media.Imaging;
+using PiSignage.Signage;
 
 namespace PiSignage.Control;
 
@@ -34,6 +35,22 @@ public static class ThumbnailCache
             return img;
         }
         catch { return null; }   // no thumbnail is fine — the glyph shows instead
+    }
+
+    public static void ClearDevice(SavedDevice device)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+        if (!Directory.Exists(Dir)) return;
+
+        var hosts = new[] { device.Ip, device.Hostname, device.Name }
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(Sanitize)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        foreach (var host in hosts)
+        {
+            foreach (var path in Directory.EnumerateFiles(Dir, host + "_*.png"))
+                File.Delete(path);
+        }
     }
 
     static BitmapImage? Decode(byte[] data)

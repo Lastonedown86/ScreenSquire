@@ -89,6 +89,18 @@ class TrustStore:
         with self._lock:
             return self._reload()["controller_id"]
 
+    @property
+    def has_recovery_pin(self) -> bool:
+        """Report whether a complete PIN verifier is durably present."""
+        with self._lock:
+            data = self._reload()
+            try:
+                salt = _unb64(data["pin_salt"])
+                verifier = _unb64(data["pin_hash"])
+            except (AttributeError, KeyError, TypeError, ValueError):
+                return False
+            return len(salt) == 16 and len(verifier) == hashlib.sha256().digest_size
+
     def initialize(self) -> str:
         with self._lock:
             if self.path.exists():
