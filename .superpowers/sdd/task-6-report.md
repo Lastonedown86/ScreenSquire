@@ -82,3 +82,47 @@ Root-agent execution completed successfully:
   `1 accepted warning` in 12.95 seconds.
 - The runtime `agent/data/dashboard.json` hash and timestamp were unchanged:
   `59C0FCED820275B9C25E3F99938588745EB24B6D0BCE1AB9496B83247D842E32|639205422347712357`.
+
+## Review fixes
+
+Review identified that tournament targets without credentials were filtered out
+of `Targets`, so a remembered multi-TV selection could silently become a
+partial push. It also requested direct proof that the static lock coordinates
+different client instances and mutation families, and found that AgentUpdater
+normalized only its upload URL, producing `//api/status` while polling a base
+URL with a trailing slash.
+
+The review RED run produced `3 failed, 7 passed`:
+
+- three AgentUpdater polls used `GET //api/status`;
+- both TvChoice tests failed because the explicit requested/pairing/control
+  state did not exist;
+- both new concurrency tests already passed, confirming that a PushClient
+  dashboard mutation blocks a WifiProvisioner mutation for the same DeviceId
+  across separate HttpClient instances, while different DeviceIds proceed
+  concurrently.
+
+The fixes:
+
+- keep every saved TV visible in the tournament selector;
+- force credential-missing targets unchecked and disabled with a visible
+  `Pair this Pi` label and tooltip;
+- preserve a remembered unavailable DeviceId so it cannot be silently dropped,
+  show an explicit warning, and restore its checked state after pairing;
+- gate capture, timer, preset, pin, and playlist-return actions on at least one
+  checked controllable target;
+- refresh every open SignageWindow after AddPi/re-pair returns;
+- normalize AgentUpdater's base URL once for both signed upload and unsigned
+  status polling, with exact URI and unsigned-read assertions.
+
+Focused review GREEN verification produced `10 passed, 0 failed` in 317 ms,
+including WPF compilation.
+
+Final full review-fix verification:
+
+- `dotnet test PiSignage.slnx`: `105 passed, 0 failed` in 1 second.
+- `dotnet build PiSignage.slnx`: `0 warnings, 0 errors` in 6.70 seconds.
+- `agent\.venv\Scripts\python.exe -m pytest agent -q`: `91 passed`,
+  `1 accepted warning` in 14.01 seconds.
+- Runtime dashboard metadata was identical before and after:
+  `59C0FCED820275B9C25E3F99938588745EB24B6D0BCE1AB9496B83247D842E32|639205422347712357`.

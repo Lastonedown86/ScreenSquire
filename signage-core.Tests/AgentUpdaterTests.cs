@@ -39,6 +39,7 @@ public class AgentUpdaterTests
     private sealed class FakeHandler : HttpMessageHandler
     {
         public List<string> Requests = new();
+        public List<HttpRequestMessage> RequestMessages = new();
         public Func<HttpRequestMessage, HttpResponseMessage> Respond = _ => new(HttpStatusCode.OK);
         public System.Net.Http.Headers.ContentDispositionHeaderValue? CapturedContentDisposition;
         public byte[]? CapturedFileBytes;
@@ -46,6 +47,7 @@ public class AgentUpdaterTests
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
         {
             Requests.Add($"{req.Method} {req.RequestUri!.PathAndQuery}");
+            RequestMessages.Add(req);
             // read the multipart content now, before responding — the caller disposes it later
             if (req.Content is MultipartFormDataContent multipart)
             {
@@ -74,9 +76,12 @@ public class AgentUpdaterTests
                     : Json("{\"agent_version\": \"2\"}"));
         using var http = new HttpClient(handler);
         var zipBytes = new byte[] { 1, 2, 3 };
-        await AgentUpdater.PushAsync(http, "http://pi:8080", zipBytes, "2", Context(),
+        await AgentUpdater.PushAsync(http, "http://pi:8080/", zipBytes, "2", Context(),
             timeout: TimeSpan.FromSeconds(30), pollDelay: TimeSpan.Zero);
         Assert.Equal("POST /api/update", handler.Requests[0]);
+        Assert.All(
+            handler.Requests.Skip(1),
+            request => Assert.Equal("GET /api/status", request));
         Assert.True(statusCalls >= 3);
         Assert.Equal("file", handler.CapturedContentDisposition?.Name?.Trim('"'));
         Assert.Equal(zipBytes, handler.CapturedFileBytes);
@@ -91,6 +96,9 @@ public class AgentUpdaterTests
         Assert.Equal(
             64,
             Header(handler.UpdateRequest!, "X-PiSignage-Signature").Length);
+        Assert.All(
+            handler.RequestMessages.Where(request => request.Method == HttpMethod.Get),
+            AssertNoControlHeaders);
     }
 
     [Fact]
@@ -128,6 +136,15 @@ public class AgentUpdaterTests
 
     static string Header(HttpRequestMessage request, string name) =>
         request.Headers.GetValues(name).Single();
+
+    static void AssertNoControlHeaders(HttpRequestMessage request)
+    {
+        Assert.DoesNotContain(
+            request.Headers,
+            header => header.Key.StartsWith(
+                "X-PiSignage-",
+                StringComparison.OrdinalIgnoreCase));
+    }
 
     static string Sha256Hex(byte[] bytes) =>
         Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();

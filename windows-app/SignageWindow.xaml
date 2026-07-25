@@ -19,14 +19,17 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <CheckBox Content="{Binding Device.Name}" IsChecked="{Binding Checked, Mode=TwoWay}"
+                        <CheckBox Content="{Binding DisplayLabel}" IsChecked="{Binding Checked, Mode=TwoWay}"
+                                  IsEnabled="{Binding CanControl}"
                                   Margin="0,0,14,4" Checked="Tv_CheckChanged" Unchecked="Tv_CheckChanged"
-                                  ToolTip="Send captures and the round timer to this TV"/>
+                                  ToolTip="{Binding ControlHint}"
+                                  ToolTipService.ShowOnDisabled="True"/>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
             <TextBlock x:Name="NoTvHint" Text="Tick at least one TV above."
-                       Foreground="{StaticResource Warning}" Margin="0,0,0,4" Visibility="Collapsed"/>
+                       Foreground="{StaticResource Warning}" Margin="0,0,0,4"
+                       TextWrapping="Wrap" Visibility="Collapsed"/>
 
             <WrapPanel Margin="0,4,0,0" VerticalAlignment="Center">
                 <TextBlock Text="Board:" VerticalAlignment="Center" Margin="0,0,4,0" Foreground="{StaticResource TextMuted}"/>
