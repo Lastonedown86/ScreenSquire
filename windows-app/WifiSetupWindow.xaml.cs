@@ -336,8 +336,7 @@ public partial class WifiSetupWindow : Window
                 PiUsbBase,
                 Ssid,
                 EffectivePassword,
-                _vault,
-                deviceId,
+                ControlContext(deviceId),
                 cancellationToken);
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -411,5 +410,18 @@ public partial class WifiSetupWindow : Window
             if (!_lifetime.IsCancellationRequested)
                 Working.Visibility = Visibility.Collapsed;
         }
+    }
+
+    ControlContext ControlContext(string deviceId)
+    {
+        var credential = _vault.TryGet(deviceId)
+            ?? throw new KeyNotFoundException(
+                $"No controller credential exists for device '{deviceId}'.");
+        var stableDeviceId = deviceId;
+        return new ControlContext(
+            stableDeviceId,
+            _vault.Load().ControllerId,
+            credential.Secret,
+            () => _vault.TakeNextCounter(stableDeviceId));
     }
 }

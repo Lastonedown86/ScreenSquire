@@ -1,6 +1,9 @@
 namespace PiSignage.Signage;
 
-public sealed record PushTarget(string Name, string BaseUrl);
+public sealed record PushTarget(
+    string Name,
+    string BaseUrl,
+    ControlContext ControlContext);
 
 public sealed class MultiPushResult
 {

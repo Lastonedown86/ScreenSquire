@@ -1,8 +1,58 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 
 namespace PiSignage.Signage;
+
+public sealed record ControlContext(
+    string DeviceId,
+    string ControllerId,
+    byte[] Secret,
+    Func<long> TakeNextCounter);
+
+public static class SignedControlRequest
+{
+    static readonly ConcurrentDictionary<string, SemaphoreSlim> DeviceLocks =
+        new(StringComparer.Ordinal);
+
+    public static async Task<HttpResponseMessage> SendAsync(
+        HttpClient http,
+        HttpRequestMessage request,
+        ControlContext context,
+        byte[] entityBytes,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(entityBytes);
+        ArgumentException.ThrowIfNullOrWhiteSpace(context.DeviceId);
+        ArgumentNullException.ThrowIfNull(context.TakeNextCounter);
+
+        var deviceLock = DeviceLocks.GetOrAdd(
+            context.DeviceId,
+            static _ => new SemaphoreSlim(1, 1));
+        await deviceLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var entityHash = Convert.ToHexString(SHA256.HashData(entityBytes))
+                .ToLowerInvariant();
+            ControlRequestSigner.Sign(
+                request,
+                context.ControllerId,
+                context.Secret,
+                context.TakeNextCounter(),
+                entityHash);
+            return await http.SendAsync(request, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            deviceLock.Release();
+        }
+    }
+}
 
 public static class ControlRequestSigner
 {

@@ -20,6 +20,7 @@ public partial class MainWindow : Window
     private readonly PiSignage.Signage.DeviceStore _deviceStore = new();
     private readonly PiSignage.Signage.CredentialVault _credentialVault =
         new(new DpapiSecretProtector());
+    private PiSignage.Signage.ControlContext? _connectedControlContext;
     private System.Collections.Generic.List<PiSignage.Signage.SavedDevice> _devices = new();
 
     public MainWindow()
@@ -158,6 +159,7 @@ public partial class MainWindow : Window
         try
         {
             _api?.Dispose();
+            _connectedControlContext = null;
             _api = new ApiClient(host, port);
             var status = await _api.GetStatusAsync() ?? throw new HttpRequestException("Empty response");
             if (!PiSignage.Signage.DeviceIdentityPolicy.IsMatch(
@@ -166,6 +168,7 @@ public partial class MainWindow : Window
                 throw new InvalidDataException(
                     "The endpoint reported a different device identity.");
             }
+            _connectedControlContext = TryControlContext(status.DeviceId);
             LblStatus.Text = $"Connected to {DisplayName(status)}";
             MainArea.IsEnabled = true;
             GettingStarted.Visibility = Visibility.Collapsed;
@@ -189,6 +192,7 @@ public partial class MainWindow : Window
             MainArea.IsEnabled = false;
             GettingStarted.Visibility = Visibility.Visible;
             _connectedHost = null;
+            _connectedControlContext = null;
             BtnKiosk.IsEnabled = BtnRemote.IsEnabled = false;
             BtnKiosk.Content = "_TV display on/off";
             LblStatus.Text = "Not connected — follow the steps above";
@@ -297,7 +301,7 @@ public partial class MainWindow : Window
         try
         {
             using var api = new ApiClient(dev.Ip, dev.Port);
-            await api.SetNameAsync(name, _credentialVault, dev.DeviceId);
+            await api.SetNameAsync(name, ControlContext(dev.DeviceId));
             dev.Hostname = name;   // scans key devices by the Pi-reported name
             if (string.Equals(App.Settings.LastDeviceHostname, oldHostname, StringComparison.OrdinalIgnoreCase))
                 App.Settings.LastDeviceHostname = name;
@@ -366,7 +370,9 @@ public partial class MainWindow : Window
                 MessageBox.Show(this, "This turns off the signage on the TV and shows the Pi's desktop instead.\n\nTurn the TV display off?",
                     "TV display off", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
                 return;
-            bool ok = await _api.SetKioskAsync(!running);
+            bool ok = await _api.SetKioskAsync(
+                !running,
+                ConnectedControlContext());
             if (!ok) { Toaster.Show("Couldn't switch the TV display — try again.", ToastKind.Error); return; }
             Toaster.Show(running
                 ? "TV display is off — use 'View Pi screen' to control the Pi's desktop."
@@ -411,7 +417,12 @@ public partial class MainWindow : Window
                     catch (Exception) { skipped++; continue; }   // off / unreachable — leave it alone
                     if (current == bundled) { skipped++; continue; }  // already up to date
 
-                    await PiSignage.Signage.AgentUpdater.PushAsync(http, baseUrl, zip, bundled);
+                    await PiSignage.Signage.AgentUpdater.PushAsync(
+                        http,
+                        baseUrl,
+                        zip,
+                        bundled,
+                        ControlContext(dev.DeviceId));
                     ok++;
                 }
                 catch (HttpRequestException) { failedNames.Add($"{dev.Name} (needs a one-time manual update)"); }
@@ -619,7 +630,7 @@ public partial class MainWindow : Window
             foreach (var path in paths)
             {
                 LblStatus.Text = $"Uploading {System.IO.Path.GetFileName(path)}…";
-                await _api.UploadMediaAsync(path);
+                await _api.UploadMediaAsync(path, ConnectedControlContext());
             }
             await ReloadMediaAsync();
             Toaster.Show("Upload finished — your files are on the Pi.", ToastKind.Success);
@@ -737,7 +748,13 @@ public partial class MainWindow : Window
         {
             foreach (var f in picked)
             {
-                try { await _api.DeleteMediaAsync(f.Name); deleted.Add(f.Name); }
+                try
+                {
+                    await _api.DeleteMediaAsync(
+                        f.Name,
+                        ConnectedControlContext());
+                    deleted.Add(f.Name);
+                }
                 catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Conflict) { inUse.Add(f); }
                 catch (Exception ex) { failed.Add($"{f.Name} — {ex.Message}"); }
             }
@@ -761,8 +778,12 @@ public partial class MainWindow : Window
                     {
                         try
                         {
-                            await _api.DetachMediaAsync(f.Name);
-                            await _api.DeleteMediaAsync(f.Name);
+                            await _api.DetachMediaAsync(
+                                f.Name,
+                                ConnectedControlContext());
+                            await _api.DeleteMediaAsync(
+                                f.Name,
+                                ConnectedControlContext());
                             deleted.Add(f.Name);
                         }
                         catch (Exception ex) { failed.Add($"{f.Name} — {ex.Message}"); }
@@ -819,7 +840,10 @@ public partial class MainWindow : Window
         var oldName = f.Name;
         try
         {
-            var newName = await _api.RenameMediaAsync(oldName, entered.Trim());
+            var newName = await _api.RenameMediaAsync(
+                oldName,
+                entered.Trim(),
+                ConnectedControlContext());
             await ReloadMediaAsync();
             // The Pi rewrote its playlist to the new name. Mirror that locally —
             // but never clobber unsaved edits with a server reload.
@@ -915,7 +939,9 @@ public partial class MainWindow : Window
 
         try
         {
-            await _api.PutPlaylistAsync(new Playlist { Items = _playlist.ToList(), Enabled = true });
+            await _api.PutPlaylistAsync(
+                new Playlist { Items = _playlist.ToList(), Enabled = true },
+                ConnectedControlContext());
             SetDirty(false);
             return true;
         }
@@ -935,7 +961,7 @@ public partial class MainWindow : Window
     private async void BtnSkip_Click(object sender, RoutedEventArgs e)
     {
         if (_api == null) return;
-        try { await _api.NextAsync(); }
+        try { await _api.NextAsync(ConnectedControlContext()); }
         catch (Exception ex) { Toaster.Show("Couldn't skip to the next item: " + ex.Message, ToastKind.Error); }
     }
 
@@ -953,7 +979,14 @@ public partial class MainWindow : Window
         }
         try
         {
-            await _api.ShowNowAsync(new ShowNowRequest { Type = f.Type, Source = f.Name, Duration = ShowSeconds() });
+            await _api.ShowNowAsync(
+                new ShowNowRequest
+                {
+                    Type = f.Type,
+                    Source = f.Name,
+                    Duration = ShowSeconds(),
+                },
+                ConnectedControlContext());
             await RefreshStatusAsync();
         }
         catch (Exception ex)
@@ -968,7 +1001,14 @@ public partial class MainWindow : Window
         if (AskForUrl("Show a web page") is not { } uri) return;
         try
         {
-            await _api.ShowNowAsync(new ShowNowRequest { Type = "url", Source = uri.ToString(), Duration = ShowSeconds() });
+            await _api.ShowNowAsync(
+                new ShowNowRequest
+                {
+                    Type = "url",
+                    Source = uri.ToString(),
+                    Duration = ShowSeconds(),
+                },
+                ConnectedControlContext());
             await RefreshStatusAsync();
         }
         catch (Exception ex)
@@ -982,9 +1022,34 @@ public partial class MainWindow : Window
         if (_api == null) return;
         try
         {
-            await _api.ClearShowNowAsync();
+            await _api.ClearShowNowAsync(ConnectedControlContext());
             await RefreshStatusAsync();
         }
         catch (Exception ex) { Toaster.Show("Couldn't switch back to the playlist: " + ex.Message, ToastKind.Error); }
     }
+
+    private PiSignage.Signage.ControlContext? TryControlContext(string deviceId)
+    {
+        if (string.IsNullOrWhiteSpace(deviceId))
+            return null;
+        var credential = _credentialVault.TryGet(deviceId);
+        if (credential is null)
+            return null;
+        var stableDeviceId = deviceId;
+        return new PiSignage.Signage.ControlContext(
+            stableDeviceId,
+            _credentialVault.Load().ControllerId,
+            credential.Secret,
+            () => _credentialVault.TakeNextCounter(stableDeviceId));
+    }
+
+    private PiSignage.Signage.ControlContext ControlContext(string deviceId) =>
+        TryControlContext(deviceId)
+        ?? throw new KeyNotFoundException(
+            $"No controller credential exists for device '{deviceId}'.");
+
+    private PiSignage.Signage.ControlContext ConnectedControlContext() =>
+        _connectedControlContext
+        ?? throw new InvalidOperationException(
+            "This Pi is not paired with this controller.");
 }
