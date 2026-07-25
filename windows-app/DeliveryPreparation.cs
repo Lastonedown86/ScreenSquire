@@ -7,6 +7,9 @@ using PiSignage.Signage;
 namespace PiSignage.Control;
 
 public sealed record DeliveryResetResult(bool Ok, string DeviceId);
+public sealed record DeliveryCleanupError(string Operation, string Message);
+public sealed record DeliveryPreparationOutcome(
+    IReadOnlyList<DeliveryCleanupError> CleanupErrors);
 
 public interface IDeliveryPreparationOperations
 {
@@ -36,7 +39,24 @@ public sealed class DeliveryPreparation(IDeliveryPreparationOperations operation
     readonly IDeliveryPreparationOperations _operations =
         operations ?? throw new ArgumentNullException(nameof(operations));
 
-    public async Task RunAsync(
+    public static bool CanPrepare(
+        SavedDevice? device,
+        Func<string, bool> hasCredential)
+    {
+        ArgumentNullException.ThrowIfNull(hasCredential);
+        if (device is null || string.IsNullOrWhiteSpace(device.DeviceId))
+            return false;
+        try
+        {
+            return hasCredential(device.DeviceId);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public async Task<DeliveryPreparationOutcome> RunAsync(
         SavedDevice device,
         ControlContext controlContext,
         CancellationToken cancellationToken = default)
@@ -94,10 +114,39 @@ public sealed class DeliveryPreparation(IDeliveryPreparationOperations operation
 
         // All builder-side cleanup is intentionally after confirmed remote
         // success. A failed HTTP reset leaves every local recovery record.
-        _operations.RemoveCredential(device.DeviceId);
-        _operations.RemoveSavedDevice(device.DeviceId);
-        _operations.RemoveSignageDeviceId(device.DeviceId);
-        _operations.ClearThumbnails(device);
+        var cleanupErrors = new List<DeliveryCleanupError>();
+        AttemptCleanup(
+            cleanupErrors,
+            "credential",
+            () => _operations.RemoveCredential(device.DeviceId));
+        AttemptCleanup(
+            cleanupErrors,
+            "device",
+            () => _operations.RemoveSavedDevice(device.DeviceId));
+        AttemptCleanup(
+            cleanupErrors,
+            "settings",
+            () => _operations.RemoveSignageDeviceId(device.DeviceId));
+        AttemptCleanup(
+            cleanupErrors,
+            "cache",
+            () => _operations.ClearThumbnails(device));
+        return new DeliveryPreparationOutcome(cleanupErrors.AsReadOnly());
+    }
+
+    static void AttemptCleanup(
+        List<DeliveryCleanupError> errors,
+        string operation,
+        Action cleanup)
+    {
+        try
+        {
+            cleanup();
+        }
+        catch (Exception ex)
+        {
+            errors.Add(new DeliveryCleanupError(operation, ex.Message));
+        }
     }
 }
 

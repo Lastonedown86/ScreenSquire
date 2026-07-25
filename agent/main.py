@@ -26,6 +26,7 @@ import re
 import shutil
 import socket
 import tempfile
+import threading
 import time
 import uuid
 import zipfile
@@ -58,7 +59,7 @@ PLAYLIST_FILE = DATA_DIR / "playlist.json"
 PORT = int(os.environ.get("SIGNAGE_PORT", "8080"))
 NAME_FILE = DATA_DIR / "name.txt"
 TRUST_FILE = DATA_DIR / "trust.json"
-AGENT_VERSION = "2026.07.25.3"  # bump on every agent change; the app compares this
+AGENT_VERSION = "2026.07.25.4"  # bump on every agent change; the app compares this
 
 
 def _load_name() -> str:
@@ -301,6 +302,26 @@ app.state.trust_store = trust_store
 USB_NET = ipaddress.ip_network("10.55.0.0/24")
 
 
+class MutationGate:
+    """Async context gate that is safe across request event loops."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+
+    async def __aenter__(self):
+        while not self._lock.acquire(blocking=False):
+            # Never block the event-loop thread. Cancellation while waiting
+            # exits here without owning (and therefore without leaking) the lock.
+            await asyncio.sleep(0.01)
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback) -> None:
+        self._lock.release()
+
+
+mutation_gate = MutationGate()
+
+
 def require_usb(request: Request) -> None:
     try:
         if request.client is None:
@@ -312,10 +333,24 @@ def require_usb(request: Request) -> None:
         raise HTTPException(403, "USB connection required")
 
 
-async def require_usb_control(request: Request) -> VerifiedControl:
-    """Reject non-USB callers before validating or consuming a signature."""
+async def require_control_mutation(request: Request):
+    """Hold the shared mutation gate from authentication through the response."""
+    async with mutation_gate:
+        yield await require_control(request)
+
+
+async def require_usb_mutation(request: Request):
+    """Hold the mutation gate for an unsigned USB-only mutation."""
     require_usb(request)
-    return await require_control(request)
+    async with mutation_gate:
+        yield
+
+
+async def require_usb_control_mutation(request: Request):
+    """Check USB first, then hold the gate through signed reset completion."""
+    require_usb(request)
+    async with mutation_gate:
+        yield await require_control(request)
 
 
 class PairRequest(BaseModel):
@@ -324,8 +359,10 @@ class PairRequest(BaseModel):
 
 
 @app.post("/api/pair")
-async def pair_controller(req: PairRequest, request: Request):
-    require_usb(request)
+async def pair_controller(
+    req: PairRequest,
+    _mutation: None = Depends(require_usb_mutation),
+):
     try:
         result = trust_store.pair(req.recovery_pin, req.controller_id)
     except ValueError:
@@ -366,10 +403,11 @@ def _set_delivery_device_name(value: str) -> None:
 
 @app.post("/api/prepare-delivery")
 async def prepare_delivery(
-    _control: VerifiedControl = Depends(require_usb_control),
+    _control: VerifiedControl = Depends(require_usb_control_mutation),
 ):
     await prepare_for_delivery(
         media_dir=MEDIA_DIR,
+        playlist_file=PLAYLIST_FILE,
         name_file=NAME_FILE,
         dashboard_file=DASHBOARD_FILE,
         state=state,
@@ -421,7 +459,7 @@ def _load_dashboard() -> dict:
 _dashboard: dict = _load_dashboard()
 
 
-@app.post("/api/dashboard", dependencies=[Depends(require_control)])
+@app.post("/api/dashboard", dependencies=[Depends(require_control_mutation)])
 async def set_dashboard(payload: DashboardPayload):
     global _dashboard
     prev = _dashboard or {}
@@ -506,7 +544,7 @@ async def _wlan_ssid() -> Optional[str]:
     return None
 
 
-@app.post("/api/wifi", dependencies=[Depends(require_control)])
+@app.post("/api/wifi", dependencies=[Depends(require_control_mutation)])
 async def set_wifi(req: WifiRequest):
     rc, out, err = await _run(
         ["sudo", "nmcli", "dev", "wifi", "connect", req.ssid,
@@ -548,7 +586,7 @@ async def kiosk_status():
     return {"running": out.strip() == "active"}
 
 
-@app.post("/api/kiosk", dependencies=[Depends(require_control)])
+@app.post("/api/kiosk", dependencies=[Depends(require_control_mutation)])
 async def set_kiosk(req: KioskRequest):
     rc, out, err = await _systemctl_user("start" if req.running else "stop", KIOSK_UNIT)
     if rc != 0:
@@ -574,7 +612,7 @@ async def _restart_after_update() -> None:
 @app.post("/api/update")
 async def update_agent(
     file: UploadFile,
-    control: VerifiedControl = Depends(require_control),
+    control: VerifiedControl = Depends(require_control_mutation),
 ):
     await verify_uploaded_entity(file, control.entity_sha256)
     accept_uploaded_counter(control, trust_store)
@@ -650,7 +688,7 @@ class RenameRequest(BaseModel):
     name: str = Field(min_length=1, max_length=64)
 
 
-@app.post("/api/name", dependencies=[Depends(require_control)])
+@app.post("/api/name", dependencies=[Depends(require_control_mutation)])
 async def set_name(req: RenameRequest):
     """Rename this Pi. Persists across restarts and refreshes the TV splash."""
     global DEVICE_NAME
@@ -688,7 +726,7 @@ async def get_playlist():
     return state.playlist
 
 
-@app.put("/api/playlist", dependencies=[Depends(require_control)])
+@app.put("/api/playlist", dependencies=[Depends(require_control_mutation)])
 async def put_playlist(playlist: Playlist):
     # validate media references exist before accepting
     for item in playlist.items:
@@ -708,7 +746,7 @@ async def put_playlist(playlist: Playlist):
 async def upload_media(
     name: str,
     file: UploadFile,
-    control: VerifiedControl = Depends(require_control),
+    control: VerifiedControl = Depends(require_control_mutation),
 ):
     await verify_uploaded_entity(file, control.entity_sha256)
     accept_uploaded_counter(control, trust_store)
@@ -743,7 +781,7 @@ async def list_media():
     return {"files": files}
 
 
-@app.delete("/api/media/{name}", dependencies=[Depends(require_control)])
+@app.delete("/api/media/{name}", dependencies=[Depends(require_control_mutation)])
 async def delete_media(name: str):
     safe = Path(name).name
     target = MEDIA_DIR / safe
@@ -759,7 +797,7 @@ async def delete_media(name: str):
     return {"ok": True}
 
 
-@app.post("/api/media/{name}/detach", dependencies=[Depends(require_control)])
+@app.post("/api/media/{name}/detach", dependencies=[Depends(require_control_mutation)])
 async def detach_media(name: str):
     """Stop displaying a file: pull it out of the playlist and off any
     dashboard board, so it can then be deleted or replaced."""
@@ -787,7 +825,7 @@ class RenameMediaRequest(BaseModel):
     new_name: str  # base name without extension; extension is preserved
 
 
-@app.post("/api/media/{name}/rename", dependencies=[Depends(require_control)])
+@app.post("/api/media/{name}/rename", dependencies=[Depends(require_control_mutation)])
 async def rename_media(name: str, req: RenameMediaRequest):
     safe = Path(name).name
     src = MEDIA_DIR / safe
@@ -823,7 +861,7 @@ async def rename_media(name: str, req: RenameMediaRequest):
     return {"ok": True, "name": new_full}
 
 
-@app.post("/api/show-now", dependencies=[Depends(require_control)])
+@app.post("/api/show-now", dependencies=[Depends(require_control_mutation)])
 async def show_now(req: ShowNowRequest):
     if req.type in ("image", "video") and not (MEDIA_DIR / Path(req.source).name).exists():
         raise HTTPException(400, f"Media file not found: {req.source}")
@@ -836,7 +874,7 @@ async def show_now(req: ShowNowRequest):
     return {"ok": True}
 
 
-@app.delete("/api/show-now", dependencies=[Depends(require_control)])
+@app.delete("/api/show-now", dependencies=[Depends(require_control_mutation)])
 async def clear_show_now():
     state.override = None
     state.override_until = None
@@ -844,7 +882,7 @@ async def clear_show_now():
     return {"ok": True}
 
 
-@app.post("/api/next", dependencies=[Depends(require_control)])
+@app.post("/api/next", dependencies=[Depends(require_control_mutation)])
 async def skip_next():
     state.index = (state.index + 1) % max(len(state.playlist.items), 1)
     state.bump()
