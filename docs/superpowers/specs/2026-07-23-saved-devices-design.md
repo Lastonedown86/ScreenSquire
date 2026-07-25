@@ -125,4 +125,6 @@ Atomic write (temp file + move). Corrupt/missing file → empty list (never cras
 - Self-heal depends on mDNS working on the control PC (same dependency as the
   existing Scan). If mDNS is blocked, the operator re-scans or edits the address
   manually — same fallback as today.
-- LAN only; no auth (consistent with the system).
+- Discovery and read-only display traffic remain LAN-visible. Every saved-device
+  mutation requires the current per-device controller signature; there is no
+  legacy insecure control mode.

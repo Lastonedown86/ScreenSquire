@@ -27,10 +27,11 @@ delivery_reset.py
 static/**
 ```
 
-The WPF project embeds only these paths. `AgentBundle` filters unexpected
-resources, and `deploy-agent.ps1` stages only the same allowlist. `main.py`
-contains the single `AGENT_VERSION` value used by the app/script to confirm the
-update after restart.
+The WPF project file embeds `agent/*.py` plus `agent/static/**` as resources.
+`AgentBundle` filters those resources and emits only the approved paths above
+when it creates an update; `deploy-agent.ps1` stages the same allowlist.
+`main.py` contains the single `AGENT_VERSION` value used by the app/script to
+confirm the update after restart.
 
 ## Authentication and transport
 
