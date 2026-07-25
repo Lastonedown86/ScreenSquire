@@ -146,13 +146,29 @@ class TrustStore:
             encoded = data["controller_secret"]
             return _unb64(encoded) if encoded is not None else None
 
-    def accept_counter(self, controller_id: str, counter: int) -> bool:
+    def accept_counter(
+        self,
+        controller_id: str,
+        counter: int,
+        expected_secret: bytes | None = None,
+    ) -> bool:
         with self._lock:
             data = self._reload()
+            encoded_secret = data["controller_secret"]
             if (
                 data["controller_id"] != controller_id
                 or type(counter) is not int
                 or counter <= data["last_counter"]
+                or (
+                    expected_secret is not None
+                    and (
+                        encoded_secret is None
+                        or not hmac.compare_digest(
+                            _unb64(encoded_secret),
+                            expected_secret,
+                        )
+                    )
+                )
             ):
                 return False
             updated = {**data, "last_counter": counter}

@@ -38,7 +38,12 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from control_auth import VerifiedControl, require_control, verify_uploaded_entity
+from control_auth import (
+    VerifiedControl,
+    accept_uploaded_counter,
+    require_control,
+    verify_uploaded_entity,
+)
 from trust import PairingBlocked, TrustStore
 
 log = logging.getLogger("signage")
@@ -52,7 +57,7 @@ PLAYLIST_FILE = DATA_DIR / "playlist.json"
 PORT = int(os.environ.get("SIGNAGE_PORT", "8080"))
 NAME_FILE = DATA_DIR / "name.txt"
 TRUST_FILE = DATA_DIR / "trust.json"
-AGENT_VERSION = "2026.07.25.1"  # bump on every agent change; the app compares this
+AGENT_VERSION = "2026.07.25.2"  # bump on every agent change; the app compares this
 
 
 def _load_name() -> str:
@@ -537,6 +542,7 @@ async def update_agent(
     control: VerifiedControl = Depends(require_control),
 ):
     await verify_uploaded_entity(file, control.entity_sha256)
+    accept_uploaded_counter(control, trust_store)
     data = await file.read()
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
@@ -665,11 +671,13 @@ async def put_playlist(playlist: Playlist):
 
 @app.post("/api/media")
 async def upload_media(
+    name: str,
     file: UploadFile,
     control: VerifiedControl = Depends(require_control),
 ):
     await verify_uploaded_entity(file, control.entity_sha256)
-    name = Path(file.filename or "upload").name  # strip any path components
+    accept_uploaded_counter(control, trust_store)
+    name = Path(name).name  # strip any path components from the signed query
     ext = Path(name).suffix.lower()
     if ext not in ALLOWED_UPLOAD_EXT:
         raise HTTPException(400, f"Unsupported file type: {ext}")

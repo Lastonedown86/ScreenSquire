@@ -41,6 +41,9 @@ def sign(secret: bytes, canonical: str) -> str:
 @dataclass(frozen=True)
 class VerifiedControl:
     entity_sha256: str
+    controller_id: str
+    counter: int
+    secret: bytes
 
 
 def _unauthorized() -> HTTPException:
@@ -83,7 +86,8 @@ async def require_control(request: Request) -> VerifiedControl:
         raise _unauthorized() from None
 
     content_type = request.headers.get("content-type", "")
-    if not content_type.lower().startswith("multipart/form-data"):
+    is_multipart = content_type.lower().startswith("multipart/form-data")
+    if not is_multipart:
         actual_entity_sha256 = hashlib.sha256(await request.body()).hexdigest()
         if not hmac.compare_digest(actual_entity_sha256, entity_sha256.lower()):
             raise HTTPException(400, "Request content hash does not match signature")
@@ -102,9 +106,31 @@ async def require_control(request: Request) -> VerifiedControl:
     expected_signature = sign(secret, canonical)
     if not hmac.compare_digest(expected_signature, supplied_signature.lower()):
         raise _unauthorized()
-    if not trust_store.accept_counter(controller_id, counter):
+    if (
+        not is_multipart
+        and not trust_store.accept_counter(
+            controller_id,
+            counter,
+            expected_secret=secret,
+        )
+    ):
         raise HTTPException(409, "Control counter was already used")
-    return VerifiedControl(entity_sha256=entity_sha256.lower())
+    return VerifiedControl(
+        entity_sha256=entity_sha256.lower(),
+        controller_id=controller_id,
+        counter=counter,
+        secret=secret,
+    )
+
+
+def accept_uploaded_counter(control: VerifiedControl, trust_store) -> None:
+    """Consume a multipart counter only after its uploaded bytes are verified."""
+    if not trust_store.accept_counter(
+        control.controller_id,
+        control.counter,
+        expected_secret=control.secret,
+    ):
+        raise HTTPException(409, "Control counter was already used")
 
 
 async def verify_uploaded_entity(file: UploadFile, expected_hex: str) -> None:

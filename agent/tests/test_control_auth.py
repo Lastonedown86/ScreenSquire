@@ -50,7 +50,7 @@ def test_signed_mutation_succeeds_once_and_replay_fails(client, paired_signer):
         ("PUT", "/api/playlist", {"json": {"items": [], "enabled": True}}),
         (
             "POST",
-            "/api/media",
+            "/api/media?name=x.jpg",
             {"files": {"file": ("x.jpg", b"x", "image/jpeg")}},
         ),
         ("DELETE", "/api/media/x.jpg", {}),
@@ -121,11 +121,12 @@ def test_multipart_hashes_uploaded_bytes_and_resets_stream(
     paired_signer,
 ):
     entity = b"exact uploaded bytes"
-    headers = paired_signer("POST", "/api/media", entity, counter=1)
+    path = "/api/media?name=signed.jpg"
+    headers = paired_signer("POST", path, entity, counter=1)
 
     response = client.post(
-        "/api/media",
-        files={"file": ("signed.jpg", entity, "image/jpeg")},
+        path,
+        files={"file": ("untrusted-name.jpg", entity, "image/jpeg")},
         headers=headers,
     )
 
@@ -134,15 +135,144 @@ def test_multipart_hashes_uploaded_bytes_and_resets_stream(
 
 
 def test_multipart_entity_mismatch_returns_400(client, media, paired_signer):
-    headers = paired_signer("POST", "/api/media", b"different", counter=1)
+    path = "/api/media?name=signed.jpg"
+    headers = paired_signer("POST", path, b"different", counter=1)
 
     response = client.post(
-        "/api/media",
+        path,
         files={"file": ("signed.jpg", b"actual", "image/jpeg")},
         headers=headers,
     )
 
     assert response.status_code == 400
+    assert not (media / "signed.jpg").exists()
+
+
+def test_multipart_hash_failure_does_not_consume_counter(
+    client,
+    media,
+    paired_signer,
+):
+    path = "/api/media?name=signed.jpg"
+    entity = b"correct bytes"
+    headers = paired_signer("POST", path, entity, counter=1)
+
+    mismatch = client.post(
+        path,
+        files={"file": ("ignored.jpg", b"wrong bytes", "image/jpeg")},
+        headers=headers,
+    )
+    retry = client.post(
+        path,
+        files={"file": ("ignored-again.jpg", entity, "image/jpeg")},
+        headers=headers,
+    )
+
+    assert mismatch.status_code == 400
+    assert retry.status_code == 200
+    assert (media / "signed.jpg").read_bytes() == entity
+    assert not (media / "ignored.jpg").exists()
+    assert not (media / "ignored-again.jpg").exists()
+
+
+def test_changed_multipart_filename_cannot_redirect_upload(
+    client,
+    media,
+    paired_signer,
+):
+    path = "/api/media?name=signed.jpg"
+    entity = b"same signed bytes"
+    headers = paired_signer("POST", path, entity, counter=1)
+
+    response = client.post(
+        path,
+        files={"file": ("attacker.jpg", entity, "image/jpeg")},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "signed.jpg"
+    assert (media / "signed.jpg").read_bytes() == entity
+    assert not (media / "attacker.jpg").exists()
+
+
+def test_changed_signed_upload_query_invalidates_signature(
+    client,
+    media,
+    paired_signer,
+):
+    entity = b"signed bytes"
+    headers = paired_signer(
+        "POST",
+        "/api/media?name=signed.jpg",
+        entity,
+        counter=1,
+    )
+
+    response = client.post(
+        "/api/media?name=redirected.jpg",
+        files={"file": ("ignored.jpg", entity, "image/jpeg")},
+        headers=headers,
+    )
+
+    assert response.status_code == 401
+    assert not (media / "signed.jpg").exists()
+    assert not (media / "redirected.jpg").exists()
+
+
+def test_signed_method_substitution_is_rejected(client, paired_signer):
+    headers = paired_signer("POST", "/api/show-now", counter=1)
+
+    assert client.delete("/api/show-now", headers=headers).status_code == 401
+
+
+def test_signed_raw_path_substitution_is_rejected(client, paired_signer):
+    headers = paired_signer(
+        "POST",
+        "/api/media/signed.jpg/detach",
+        counter=1,
+    )
+
+    response = client.post("/api/media/other.jpg/detach", headers=headers)
+
+    assert response.status_code == 401
+
+
+def test_signed_query_order_is_exact(client, media, paired_signer):
+    entity = b"signed bytes"
+    headers = paired_signer(
+        "POST",
+        "/api/media?name=signed.jpg&tag=one",
+        entity,
+        counter=1,
+    )
+
+    response = client.post(
+        "/api/media?tag=one&name=signed.jpg",
+        files={"file": ("ignored.jpg", entity, "image/jpeg")},
+        headers=headers,
+    )
+
+    assert response.status_code == 401
+    assert not (media / "signed.jpg").exists()
+
+
+def test_signed_query_encoding_is_exact(client, media, paired_signer):
+    entity = b"signed bytes"
+    headers = paired_signer(
+        "POST",
+        "/api/media?name=signed.jpg&tag=a%2Fb",
+        entity,
+        counter=1,
+    )
+
+    response = client.post(
+        "/api/media?name=signed.jpg&tag=a/b",
+        files={"file": ("ignored.jpg", entity, "image/jpeg")},
+        headers=headers,
+    )
+
+    assert response.status_code == 401
     assert not (media / "signed.jpg").exists()
 
 
@@ -173,6 +303,44 @@ def test_pair_and_pair_status_are_usb_only(agent_module):
     }
     assert "secret" not in json.dumps(status.json()).lower()
     assert "pin" not in json.dumps(status.json()).lower()
+
+
+def test_pair_post_off_usb_and_failures_never_echo_credentials(
+    agent_module,
+    monkeypatch,
+):
+    import trust
+
+    now = [100.0]
+    monkeypatch.setattr(trust.time, "monotonic", lambda: now[0])
+    non_usb = TestClient(agent_module.app)
+    usb = TestClient(agent_module.app, client=("10.55.0.2", 50000))
+    recovery_pin = agent_module._test_recovery_pin
+    wrong_pin = "00000000" if recovery_pin != "00000000" else "00000001"
+    request = {
+        "recovery_pin": recovery_pin,
+        "controller_id": "windows-controller",
+    }
+
+    off_usb = non_usb.post("/api/pair", json=request)
+    assert off_usb.status_code == 403
+    assert recovery_pin not in off_usb.text
+    assert "secret" not in off_usb.text.lower()
+
+    wrong_request = {**request, "recovery_pin": wrong_pin}
+    for _ in range(5):
+        wrong = usb.post("/api/pair", json=wrong_request)
+        assert wrong.status_code == 401
+        assert wrong_pin not in wrong.text
+        assert "secret" not in wrong.text.lower()
+
+    blocked = usb.post("/api/pair", json=request)
+    assert blocked.status_code == 429
+    assert recovery_pin not in blocked.text
+    assert "secret" not in blocked.text.lower()
+
+    now[0] += 60
+    assert usb.post("/api/pair", json=request).status_code == 200
 
 
 def test_public_status_has_stable_device_identity_and_pairing_state(

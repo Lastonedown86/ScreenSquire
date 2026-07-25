@@ -126,6 +126,29 @@ def test_counter_must_increase_and_survives_reload(tmp_path):
     assert reloaded.accept_counter("store", 5)
 
 
+def test_counter_acceptance_rejects_secret_from_previous_pairing_epoch(tmp_path):
+    store = TrustStore(tmp_path / "trust.json")
+    pin = store.initialize()
+    store.pair(pin, "store")
+    verified_secret = store.controller_secret("store")
+    assert verified_secret is not None
+
+    # A request verifies with this secret, then the same controller ID re-pairs
+    # before the request reaches its atomic counter-acceptance step.
+    current = store.pair(pin, "store")
+
+    assert not store.accept_counter(
+        "store",
+        1,
+        expected_secret=verified_secret,
+    )
+    assert store.accept_counter(
+        "store",
+        1,
+        expected_secret=current.secret,
+    )
+
+
 def test_two_instances_cannot_resurrect_revoked_controller_or_stale_counter(tmp_path):
     path = tmp_path / "trust.json"
     first = TrustStore(path)
