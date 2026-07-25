@@ -35,6 +35,32 @@ public class AgentUpdaterTests
         Assert.Equal("<html>", r.ReadToEnd());
     }
 
+    [Fact]
+    public void Embedded_bundle_contains_complete_agent_and_no_other_root_files()
+    {
+        var files = PiSignage.Control.AgentBundle.Files();
+        var rootFiles = files.Keys
+            .Where(path => !path.Contains('/'))
+            .OrderBy(path => path)
+            .ToArray();
+
+        Assert.Equal(
+            new[]
+            {
+                "control_auth.py",
+                "delivery_reset.py",
+                "main.py",
+                "trust.py",
+            },
+            rootFiles);
+        Assert.Contains(files.Keys, path => path.StartsWith("static/"));
+        Assert.All(
+            files.Keys,
+            path => Assert.True(
+                rootFiles.Contains(path) || path.StartsWith("static/"),
+                $"Unexpected embedded agent path: {path}"));
+    }
+
     // fake HTTP handler: scripted responses per URL
     private sealed class FakeHandler : HttpMessageHandler
     {
