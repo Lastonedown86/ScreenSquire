@@ -3,6 +3,7 @@
 set -euo pipefail
 
 USER_NAME="${SUDO_USER:-$USER}"
+HOME_DIR="$(getent passwd "$USER_NAME" | cut -d: -f6)"
 WIFI_COUNTRY="${WIFI_COUNTRY:-US}"   # override for non-US: WIFI_COUNTRY=GB bash provision-usb.sh
 
 # 0. Enable the WiFi radio out of the box. Raspberry Pi OS soft-blocks WiFi until
@@ -17,6 +18,20 @@ grep -q '^dtoverlay=dwc2,dr_mode=peripheral' /boot/firmware/config.txt 2>/dev/nu
 
 # 2. Install the gadget bring-up script
 sudo install -m 0755 "$(dirname "$0")/usb-gadget-ncm.sh" /usr/local/sbin/usb-gadget-ncm.sh
+
+# Initialize the device identity and one-time recovery PIN as the target user.
+TRUST_FILE="$HOME_DIR/pi-signage/agent/data/trust.json"
+if [ ! -f "$TRUST_FILE" ]; then
+  mkdir -p "$(dirname "$TRUST_FILE")"
+  chown "$USER_NAME:$USER_NAME" "$(dirname "$TRUST_FILE")"
+  PIN_LINE="$(sudo -u "$USER_NAME" python3 "$HOME_DIR/pi-signage/agent/trust.py" init \
+    --data-dir "$HOME_DIR/pi-signage/agent/data")"
+  echo "============================================================"
+  echo "$PIN_LINE"
+  echo "Print this 8-digit PIN on the bottom label before delivery."
+  echo "It will not be displayed again."
+  echo "============================================================"
+fi
 
 # 3. systemd unit to run it at boot
 sudo tee /etc/systemd/system/usb-gadget-ncm.service >/dev/null <<'EOF'
