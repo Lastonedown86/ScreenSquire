@@ -70,6 +70,10 @@
                         ToolTip="Capture pairings/standings from your screen and run the round timer"/>
                 <Button Content="Set up a _new Pi" Margin="0,0,0,4" Click="AddPi_Click"
                         ToolTip="Connect a brand-new Pi to your WiFi using a USB cable"/>
+                <Button x:Name="BtnPrepareDelivery" Content="Prepare Pi for delivery"
+                        Margin="6,0,0,4" Click="BtnPrepareDelivery_Click" IsEnabled="False"
+                        ToolTip="Permanently erase builder access and customer data before handing over this Pi"
+                        ToolTipService.ShowOnDisabled="True"/>
             </WrapPanel>
         </Border>
 

@@ -44,6 +44,7 @@ from control_auth import (
     require_control,
     verify_uploaded_entity,
 )
+from delivery_reset import prepare_for_delivery
 from trust import PairingBlocked, TrustStore
 
 log = logging.getLogger("signage")
@@ -57,7 +58,7 @@ PLAYLIST_FILE = DATA_DIR / "playlist.json"
 PORT = int(os.environ.get("SIGNAGE_PORT", "8080"))
 NAME_FILE = DATA_DIR / "name.txt"
 TRUST_FILE = DATA_DIR / "trust.json"
-AGENT_VERSION = "2026.07.25.2"  # bump on every agent change; the app compares this
+AGENT_VERSION = "2026.07.25.3"  # bump on every agent change; the app compares this
 
 
 def _load_name() -> str:
@@ -311,6 +312,12 @@ def require_usb(request: Request) -> None:
         raise HTTPException(403, "USB connection required")
 
 
+async def require_usb_control(request: Request) -> VerifiedControl:
+    """Reject non-USB callers before validating or consuming a signature."""
+    require_usb(request)
+    return await require_control(request)
+
+
 class PairRequest(BaseModel):
     recovery_pin: str = Field(pattern=r"^\d{8}$")
     controller_id: str = Field(min_length=16, max_length=64)
@@ -345,6 +352,34 @@ async def pair_status(request: Request):
         "paired": controller_id is not None,
         "controller_id": controller_id,
     }
+
+
+def _set_delivery_dashboard(value: dict) -> None:
+    global _dashboard
+    _dashboard = value
+
+
+def _set_delivery_device_name(value: str) -> None:
+    global DEVICE_NAME
+    DEVICE_NAME = value
+
+
+@app.post("/api/prepare-delivery")
+async def prepare_delivery(
+    _control: VerifiedControl = Depends(require_usb_control),
+):
+    await prepare_for_delivery(
+        media_dir=MEDIA_DIR,
+        name_file=NAME_FILE,
+        dashboard_file=DASHBOARD_FILE,
+        state=state,
+        empty_playlist=Playlist(items=[], enabled=True),
+        set_dashboard=_set_delivery_dashboard,
+        set_device_name=_set_delivery_device_name,
+        run=_run,
+        clear_controller=trust_store.clear_controller,
+    )
+    return {"ok": True, "device_id": trust_store.device_id}
 
 
 # ---- kiosk page + media ----
