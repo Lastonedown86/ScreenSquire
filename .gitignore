@@ -5,3 +5,4 @@ __pycache__/
 agent/data/
 *.user
 .superpowers/
+.worktrees/
