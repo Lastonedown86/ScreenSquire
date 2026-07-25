@@ -15,11 +15,12 @@ public partial class WifiSetupWindow : Window
     readonly PairingClient _pairing;
     readonly CredentialVault _vault = new(new DpapiSecretProtector());
     readonly CancellationTokenSource _lifetime = new();
+    readonly DetectionRunGate _detectionRuns = new();
+    Task? _detectionTask;
     PairStatus? _cachedPairStatus;
     string _controllerId = "";
     bool _cachedHasCredential;
     bool _detected;
-    bool _cancelDetect;
 
     // Set on success so MainWindow can auto-connect to the freshly set-up Pi.
     public string? NewDeviceIp { get; private set; }
@@ -34,13 +35,13 @@ public partial class WifiSetupWindow : Window
         // editable ComboBox has no TextChanged attribute — hook the routed event
         CmbSsid.AddHandler(System.Windows.Controls.Primitives.TextBoxBase.TextChangedEvent,
             new System.Windows.Controls.TextChangedEventHandler((s, e) => Field_Changed(s, e)));
-        Closing += (_, _) => _lifetime.Cancel();
-        Loaded += async (_, _) =>
+        Closing += (_, _) =>
         {
-            try { await DetectLoop(_lifetime.Token); }
-            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
-            catch (Exception ex) { ShowDetectionFailure(ex); }
+            _detectionRuns.Cancel();
+            _lifetime.Cancel();
         };
+        Closed += (_, _) => _detectionRuns.Dispose();
+        Loaded += async (_, _) => await StartDetectionAsync();
     }
 
     void Window_PreviewKeyDown(object s, System.Windows.Input.KeyEventArgs e)
@@ -54,14 +55,62 @@ public partial class WifiSetupWindow : Window
         head.Foreground = (Brush)FindResource("Success");
     }
 
+    async Task StartDetectionAsync()
+    {
+        await CancelActiveDetectionAsync();
+        if (_lifetime.IsCancellationRequested ||
+            !_detectionRuns.TryBegin(_lifetime.Token, out var runToken))
+        {
+            return;
+        }
+
+        var task = RunDetectionAsync(runToken);
+        _detectionTask = task;
+        try
+        {
+            await task;
+        }
+        finally
+        {
+            if (ReferenceEquals(_detectionTask, task))
+                _detectionTask = null;
+        }
+    }
+
+    async Task RunDetectionAsync(CancellationToken runToken)
+    {
+        try
+        {
+            await DetectLoop(runToken);
+        }
+        catch (OperationCanceledException) when (runToken.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            ShowDetectionFailure(ex);
+        }
+        finally
+        {
+            _detectionRuns.Complete(runToken);
+        }
+    }
+
+    async Task CancelActiveDetectionAsync()
+    {
+        _detectionRuns.Cancel();
+        var active = _detectionTask;
+        if (active is null) return;
+        try { await active; }
+        catch (OperationCanceledException) { }
+    }
+
     async Task DetectLoop(CancellationToken cancellationToken)
     {
-        _cancelDetect = false;
-        for (int i = 0; i < 60 && !_detected && !_cancelDetect; i++)   // ~60s of polling
+        for (int i = 0; i < 60 && !_detected; i++)   // ~60s of polling
         {
             if (await _wifi.DetectAsync(PiUsbBase, cancellationToken))
             {
                 await RefreshPairingStateAsync(cancellationToken);
+                await LoadNearbyNetworks(cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
                 _detected = true;
                 Detecting.Visibility = Visibility.Collapsed;
@@ -69,8 +118,6 @@ public partial class WifiSetupWindow : Window
                 DetectStatus.Text = "Pi found over USB.";
                 MarkDone(Step1Head);
                 Form.IsEnabled = true;
-                await LoadNearbyNetworks(cancellationToken);
-                cancellationToken.ThrowIfCancellationRequested();
                 CmbSsid.Focus();
                 return;
             }
@@ -79,18 +126,22 @@ public partial class WifiSetupWindow : Window
                 : $"Looking for the Pi over USB… ({i}s)";
             await Task.Delay(1000, cancellationToken);
         }
-        if (_detected || _cancelDetect) return;
+        if (_detected) return;
         DetectStatus.Text = "No Pi found. Check the cable is a DATA USB-C cable and the Pi has booted, then click Retry.";
         Detecting.Visibility = Visibility.Collapsed;
         BtnCancelDetect.Visibility = Visibility.Collapsed;
         BtnRetry.Visibility = Visibility.Visible;   // let the user try again without reopening
     }
 
-    void CancelDetect_Click(object s, RoutedEventArgs e)
+    async void CancelDetect_Click(object s, RoutedEventArgs e)
     {
-        _cancelDetect = true;
+        BtnCancelDetect.IsEnabled = false;
+        await CancelActiveDetectionAsync();
+        if (_lifetime.IsCancellationRequested) return;
+        _detected = false;
         Detecting.Visibility = Visibility.Collapsed;
         BtnCancelDetect.Visibility = Visibility.Collapsed;
+        BtnCancelDetect.IsEnabled = true;
         DetectStatus.Text = "Stopped looking. Click Retry when the Pi is plugged in.";
         BtnRetry.Visibility = Visibility.Visible;
     }
@@ -101,9 +152,8 @@ public partial class WifiSetupWindow : Window
         Detecting.Visibility = Visibility.Visible;
         BtnCancelDetect.Visibility = Visibility.Visible;
         DetectStatus.Text = "Looking for the Pi over USB…";
-        try { await DetectLoop(_lifetime.Token); }
-        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
-        catch (Exception ex) { ShowDetectionFailure(ex); }
+        _detected = false;
+        await StartDetectionAsync();
     }
 
     void ShowDetectionFailure(Exception ex)

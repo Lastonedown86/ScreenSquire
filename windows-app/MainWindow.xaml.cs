@@ -77,7 +77,7 @@ public partial class MainWindow : Window
                 var status = await probe.GetStatusAsync();
                 d.Online = status is not null &&
                     PiSignage.Signage.DeviceIdentityPolicy.IsMatch(
-                        d, status.DeviceId);
+                        d, status.DeviceId, status.Name);
             }
             catch { d.Online = false; }
         }));
@@ -161,7 +161,7 @@ public partial class MainWindow : Window
             _api = new ApiClient(host, port);
             var status = await _api.GetStatusAsync() ?? throw new HttpRequestException("Empty response");
             if (!PiSignage.Signage.DeviceIdentityPolicy.IsMatch(
-                    expected, status.DeviceId))
+                    expected, status.DeviceId, status.Name))
             {
                 throw new InvalidDataException(
                     "The endpoint reported a different device identity.");

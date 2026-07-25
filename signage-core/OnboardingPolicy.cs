@@ -2,13 +2,27 @@ namespace PiSignage.Signage;
 
 public static class DeviceIdentityPolicy
 {
-    public static bool IsMatch(SavedDevice saved, string reportedDeviceId)
+    public static bool IsMatch(
+        SavedDevice saved,
+        string reportedDeviceId,
+        string reportedHostname)
     {
         ArgumentNullException.ThrowIfNull(saved);
         if (string.IsNullOrWhiteSpace(reportedDeviceId))
             return false;
-        return string.IsNullOrWhiteSpace(saved.DeviceId) ||
-            string.Equals(saved.DeviceId, reportedDeviceId, StringComparison.Ordinal);
+        if (!string.IsNullOrWhiteSpace(saved.DeviceId))
+        {
+            return string.Equals(
+                saved.DeviceId,
+                reportedDeviceId,
+                StringComparison.Ordinal);
+        }
+        return !string.IsNullOrWhiteSpace(saved.Hostname) &&
+            !string.IsNullOrWhiteSpace(reportedHostname) &&
+            string.Equals(
+                saved.Hostname,
+                reportedHostname,
+                StringComparison.OrdinalIgnoreCase);
     }
 
     public static void ApplyVerifiedEndpoint(
@@ -18,7 +32,7 @@ public static class DeviceIdentityPolicy
         string ip,
         int port)
     {
-        if (!IsMatch(saved, reportedDeviceId))
+        if (!IsMatch(saved, reportedDeviceId, reportedHostname))
             throw new InvalidDataException("The endpoint reported a different device identity.");
         if (port <= 0)
             throw new ArgumentOutOfRangeException(nameof(port));

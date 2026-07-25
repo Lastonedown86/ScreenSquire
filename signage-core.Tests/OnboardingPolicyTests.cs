@@ -11,7 +11,8 @@ public class OnboardingPolicyTests
             Ip = "192.168.1.20", Port = 8080
         };
 
-        Assert.False(DeviceIdentityPolicy.IsMatch(saved, "different-id"));
+        Assert.False(DeviceIdentityPolicy.IsMatch(
+            saved, "different-id", "front"));
         Assert.Throws<InvalidDataException>(() =>
             DeviceIdentityPolicy.ApplyVerifiedEndpoint(
                 saved, "different-id", "impostor", "192.168.1.99", 9123));
@@ -29,12 +30,35 @@ public class OnboardingPolicyTests
         };
 
         DeviceIdentityPolicy.ApplyVerifiedEndpoint(
-            saved, "device-id", "pi-front", "192.168.1.30", 9123);
+            saved, "device-id", "FRONT", "192.168.1.30", 9123);
 
         Assert.Equal("device-id", saved.DeviceId);
-        Assert.Equal("pi-front", saved.Hostname);
+        Assert.Equal("FRONT", saved.Hostname);
         Assert.Equal("192.168.1.30", saved.Ip);
         Assert.Equal(9123, saved.Port);
+    }
+
+    [Fact]
+    public void Legacy_device_rejects_a_stale_ip_reporting_another_hostname()
+    {
+        var saved = new SavedDevice {
+            DeviceId = "", Name = "Front", Hostname = "pi-front",
+            Ip = "192.168.1.20", Port = 8080
+        };
+
+        Assert.False(DeviceIdentityPolicy.IsMatch(
+            saved, "other-device-id", "pi-back"));
+        Assert.Throws<InvalidDataException>(() =>
+            DeviceIdentityPolicy.ApplyVerifiedEndpoint(
+                saved,
+                "other-device-id",
+                "pi-back",
+                "192.168.1.20",
+                9123));
+        Assert.Equal("", saved.DeviceId);
+        Assert.Equal("pi-front", saved.Hostname);
+        Assert.Equal("192.168.1.20", saved.Ip);
+        Assert.Equal(8080, saved.Port);
     }
 
     [Fact]
