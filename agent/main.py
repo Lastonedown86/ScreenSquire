@@ -31,7 +31,7 @@ import time
 import uuid
 import zipfile
 from contextlib import asynccontextmanager
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
@@ -618,50 +618,89 @@ async def update_agent(
     file: UploadFile,
     control: VerifiedControl = Depends(require_control_mutation),
 ):
-    await verify_uploaded_entity(file, control.entity_sha256)
+    data = await verify_uploaded_entity(
+        file,
+        control.entity_sha256,
+        max_bytes=_UPDATE_MAX_COMPRESSED_BYTES,
+        capture=True,
+    )
+    if data is None:
+        raise RuntimeError("Verified update capture unexpectedly returned no bytes")
     accept_uploaded_counter(control, trust_store)
-    data = await file.read()
-    if len(data) > _UPDATE_MAX_COMPRESSED_BYTES:
-        raise HTTPException(400, "Compressed update is too large")
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile:
         raise HTTPException(400, "That doesn't look like a valid update file")
 
     total = 0
+    paths: dict[str, str] = {}
+    root_files: set[str] = set()
+    has_static = False
     for info in zf.infolist():
         name = info.filename
-        parts = PurePosixPath(name).parts
-        if name.startswith("/") or ".." in parts or ":" in name or "\\" in name:
+        is_directory = name.endswith("/")
+        raw_parts = name.split("/")
+        path_parts = raw_parts[:-1] if is_directory else raw_parts
+        if name.startswith("/") or ":" in name or "\\" in name or ".." in path_parts:
             raise HTTPException(400, f"Unsafe path in update: {name}")
-        if name.endswith("/"):
-            if name != "static/" and not name.startswith("static/"):
+        if not path_parts or any(part in {"", "."} for part in path_parts):
+            raise HTTPException(400, f"Non-canonical path in update: {name}")
+        canonical = "/".join(path_parts)
+        if is_directory:
+            if canonical != "static" and not canonical.startswith("static/"):
                 raise HTTPException(400, f"Unexpected folder in update: {name}")
-            continue
-        if name not in _UPDATE_ROOT_FILES and not name.startswith("static/"):
-            raise HTTPException(400, f"Unexpected file in update: {name}")
+            kind = "directory"
+            has_static = True
+        else:
+            if canonical not in _UPDATE_ROOT_FILES and not canonical.startswith("static/"):
+                raise HTTPException(400, f"Unexpected file in update: {name}")
+            kind = "file"
+            if canonical in _UPDATE_ROOT_FILES:
+                root_files.add(canonical)
+            else:
+                has_static = True
+
+        parents = [
+            "/".join(path_parts[:index])
+            for index in range(1, len(path_parts))
+        ]
+        if (
+            canonical in paths
+            or any(paths.get(parent) == "file" for parent in parents)
+            or (
+                kind == "file"
+                and any(existing.startswith(canonical + "/") for existing in paths)
+            )
+        ):
+            raise HTTPException(400, f"Duplicate or colliding path in update: {name}")
+        paths[canonical] = kind
         total += info.file_size
     if total > _UPDATE_MAX_BYTES:
         raise HTTPException(400, "Update is too large")
-    if "main.py" not in zf.namelist():
-        raise HTTPException(400, "Update is missing main.py")
+    missing = sorted(_UPDATE_ROOT_FILES - root_files)
+    if missing:
+        raise HTTPException(400, f"Update is missing {', '.join(missing)}")
+    if not has_static:
+        raise HTTPException(400, "Update is missing static content")
 
     tmp = Path(tempfile.mkdtemp(prefix="update-tmp-", dir=APP_DIR))
     try:
-        zf.extractall(tmp)  # safe: every entry name validated above
-        for module_name in sorted(_UPDATE_ROOT_FILES.intersection(zf.namelist())):
+        staged = tmp / "staged"
+        staged.mkdir()
+        zf.extractall(staged)  # safe: every entry name validated above
+        for module_name in sorted(_UPDATE_ROOT_FILES):
             try:
-                py_compile.compile(str(tmp / module_name), doraise=True)
+                py_compile.compile(str(staged / module_name), doraise=True)
             except py_compile.PyCompileError as e:
                 raise HTTPException(
                     400,
                     f"New {module_name} won't run (syntax error): {e}",
                 )
 
-        m = _VERSION_RE.search((tmp / "main.py").read_text())
+        m = _VERSION_RE.search((staged / "main.py").read_text())
         new_version = m.group(1) if m else "unknown"
 
-        # one level of backup for manual recovery over SSH if a bad update lands
+        # Build a complete recovery snapshot before changing any installed path.
         backup = APP_DIR / "update-backup"
         shutil.rmtree(backup, ignore_errors=True)
         backup.mkdir()
@@ -672,12 +711,47 @@ async def update_agent(
         if (APP_DIR / "static").exists():
             shutil.copytree(APP_DIR / "static", backup / "static")
 
-        for module_name in sorted(_UPDATE_ROOT_FILES.intersection(zf.namelist())):
-            # atomic — tmp is on APP_DIR's filesystem
-            os.replace(tmp / module_name, APP_DIR / module_name)
-        if (tmp / "static").exists():
-            shutil.copytree(tmp / "static", APP_DIR / "static", dirs_exist_ok=True)
+        rollback = tmp / "rollback"
+        rollback.mkdir()
+        managed_paths = [*sorted(_UPDATE_ROOT_FILES), "static"]
+        touched: list[str] = []
+        try:
+            for relative in managed_paths:
+                installed = APP_DIR / relative
+                original = rollback / relative
+                if installed.exists():
+                    os.replace(installed, original)
+                touched.append(relative)
+                os.replace(staged / relative, installed)
+        except OSError as install_error:
+            rollback_errors = []
+            for relative in reversed(touched):
+                installed = APP_DIR / relative
+                original = rollback / relative
+                try:
+                    if installed.is_dir():
+                        shutil.rmtree(installed)
+                    elif installed.exists():
+                        installed.unlink()
+                    if original.exists():
+                        os.replace(original, installed)
+                except OSError as rollback_error:
+                    rollback_errors.append(f"{relative}: {rollback_error}")
+            if rollback_errors:
+                log.critical(
+                    "Agent update rollback was incomplete: %s",
+                    "; ".join(rollback_errors),
+                )
+                raise HTTPException(
+                    500,
+                    "Agent update failed and rollback was incomplete",
+                ) from install_error
+            raise HTTPException(
+                500,
+                "Agent update failed; previous bundle restored",
+            ) from install_error
     finally:
+        zf.close()
         shutil.rmtree(tmp, ignore_errors=True)
 
     global _restart_task
