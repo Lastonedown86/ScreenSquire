@@ -1,11 +1,14 @@
 import base64
+import asyncio
 import hashlib
+import io
 import json
 
 import pytest
+from fastapi import HTTPException, UploadFile
 from fastapi.testclient import TestClient
 
-from control_auth import canonical_message, sign
+from control_auth import canonical_message, sign, verify_uploaded_entity
 
 
 def test_signature_matches_known_vector():
@@ -132,6 +135,43 @@ def test_multipart_hashes_uploaded_bytes_and_resets_stream(
 
     assert response.status_code == 200
     assert (media / "signed.jpg").read_bytes() == entity
+
+
+def test_upload_verifier_stops_at_limit_plus_one_and_can_return_verified_bytes():
+    oversized = UploadFile(file=io.BytesIO(b"x" * 100))
+    bytes_returned = [0]
+    original_read = oversized.read
+
+    async def tracking_read(size=-1):
+        chunk = await original_read(size)
+        bytes_returned[0] += len(chunk)
+        return chunk
+
+    oversized.read = tracking_read
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(
+            verify_uploaded_entity(
+                oversized,
+                hashlib.sha256(b"x" * 100).hexdigest(),
+                max_bytes=10,
+                capture=True,
+            )
+        )
+    assert error.value.status_code == 400
+    assert bytes_returned[0] == 11
+
+    exact = b"verified"
+    upload = UploadFile(file=io.BytesIO(exact))
+    captured = asyncio.run(
+        verify_uploaded_entity(
+            upload,
+            hashlib.sha256(exact).hexdigest(),
+            max_bytes=len(exact),
+            capture=True,
+        )
+    )
+    assert captured == exact
+    assert asyncio.run(upload.read()) == exact
 
 
 def test_multipart_entity_mismatch_returns_400(client, media, paired_signer):

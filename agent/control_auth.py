@@ -133,13 +133,33 @@ def accept_uploaded_counter(control: VerifiedControl, trust_store) -> None:
         raise HTTPException(409, "Control counter was already used")
 
 
-async def verify_uploaded_entity(file: UploadFile, expected_hex: str) -> None:
-    """Hash an uploaded file exactly, then rewind it for the route handler."""
+async def verify_uploaded_entity(
+    file: UploadFile,
+    expected_hex: str,
+    *,
+    max_bytes: int | None = None,
+    capture: bool = False,
+) -> bytes | None:
+    """Hash a bounded upload exactly, optionally returning its verified bytes."""
     digest = hashlib.sha256()
+    captured = bytearray() if capture else None
+    total = 0
     try:
-        while chunk := await file.read(1024 * 1024):
+        while True:
+            read_size = 1024 * 1024
+            if max_bytes is not None:
+                read_size = min(read_size, max_bytes - total + 1)
+            chunk = await file.read(read_size)
+            if not chunk:
+                break
+            total += len(chunk)
+            if max_bytes is not None and total > max_bytes:
+                raise HTTPException(400, "Compressed update is too large")
             digest.update(chunk)
+            if captured is not None:
+                captured.extend(chunk)
     finally:
         await file.seek(0)
     if not hmac.compare_digest(digest.hexdigest(), expected_hex.lower()):
         raise HTTPException(400, "Uploaded content hash does not match signature")
+    return bytes(captured) if captured is not None else None
