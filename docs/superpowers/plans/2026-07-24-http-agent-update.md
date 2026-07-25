@@ -13,7 +13,8 @@
 ## Global Constraints
 
 - No new dependencies anywhere (Python stdlib `zipfile`/`py_compile`; .NET `System.IO.Compression`; PS `Compress-Archive`/`Invoke-RestMethod`).
-- No auth on `/api/update` (phase-1 trusted-LAN posture; phase 2 token must cover it).
+- Historical constraint superseded by the secure ownership lifecycle:
+  `/api/update` now requires a signed controller request.
 - All user-facing app copy in plain language — the client is non-technical. No jargon like "endpoint", "HTTP", "zip".
 - Version format: date-based string `"YYYY.MM.DD.N"`, single source of truth: `AGENT_VERSION` in `agent/main.py`.
 - Update payload may contain ONLY `main.py` and `static/*`. Never the venv, requirements, or setup scripts.

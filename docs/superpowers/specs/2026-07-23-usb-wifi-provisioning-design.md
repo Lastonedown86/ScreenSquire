@@ -1,177 +1,194 @@
-# USB WiFi Provisioning Wizard — Design
+# USB Wi-Fi Provisioning and Ownership — Implemented Design
 
 **Date:** 2026-07-23
-**Status:** Approved design, pre-plan
+**Security lifecycle revision:** 2026-07-25
+**Status:** Implemented; real-Pi acceptance remains a release gate
 
-## Context
+## Context and outcome
 
-Pi Signage units (Raspberry Pi 4) are **pre-imaged by the builder** and shipped
-to customers (shops). A non-technical customer must get a brand-new unit onto
-**their own WiFi** with no SD-card handling and no command line.
+Display Pis are prepared and fully tested by the builder, then shipped to a
+store where a non-technical employee joins them to store Wi-Fi from the shared
+Controller laptop. No SD-card handling or command line is required at the
+store.
 
-The blocker: WiFi cannot be configured over the network, because the unit isn't
-on any network yet. The out-of-band channel is **USB**: the Pi 4's USB-C port,
-put in **USB gadget mode** (baked into the pre-image), presents the Pi to the
-customer's Windows PC as a **USB network adapter**. The control app then talks
-HTTP to the agent over that cable and hands it the customer's WiFi credentials.
+The out-of-band channel is USB. A pre-provisioned Raspberry Pi 4 presents an
+NCM network adapter at `10.55.0.1:8080` over a USB-C data cable. The setup wizard
+uses that link to verify physical proximity, pair with the Pi's 8-digit Recovery
+PIN, and send Wi-Fi credentials in a signed request. USB and Wi-Fi remain up
+together long enough to confirm the joined network and stable device identity.
 
-Outcome: customer plugs the Pi into their PC with a USB-C data cable, opens the
-app's **Add-a-Pi wizard**, types their WiFi **SSID + password**, clicks **Connect
-to WiFi**, and the wizard **confirms the Pi joined** (and shows its new WiFi
-address). They unplug it, and it's on the network.
+## Settled security and lifecycle decisions
 
-## Decisions (settled in brainstorming)
-
-- **USB link:** NCM ethernet gadget (`g_ncm` / configfs NCM). Windows 11 has a
-  native NCM class driver — no driver install. The Pi gets a fixed USB IP; the
-  app talks plain HTTP to the existing agent over USB. (Fallbacks, not built now:
-  RNDIS — deprecated/flaky on Win11; USB serial — bulletproof driver but needs a
-  custom protocol.)
-- **Credential entry:** manual SSID + password (no nearby-network scan in v1).
-- **WiFi backend:** `nmcli` (Raspberry Pi OS Bookworm uses NetworkManager).
-- **No hardware to buy:** gadget mode is a software feature of the USB-C port;
-  only a USB-C **data** cable is needed. On a PC port the Pi runs on limited
-  power — fine for the brief setup step (no TV attached yet).
-- **Security:** the WiFi password travels only over the local USB link (POST
-  body) and is written to a root-owned NetworkManager profile on the Pi. Nothing
-  leaves the machine. Agent stays unauthenticated (USB/LAN only), consistent with
-  the rest of the system.
-
-## Non-goals (v1)
-
-- No nearby-SSID scan/pick (manual entry only).
-- No RNDIS or serial fallback implementation (documented, not built).
-- No device naming/persistent saved-device list (separate follow-on).
-- No captive portal / hotspot method.
+- Each Display Pi has a random stable device ID and one 8-digit Recovery PIN.
+  `provision-usb.sh` initializes them once. Only the PIN verifier is stored; the
+  printed PIN cannot be recovered from the Pi.
+- The PIN must be printed on a durable bottom-case label. The label is the
+  client's recovery credential.
+- A Pi trusts exactly one Controller laptop. A successful USB-plus-PIN pairing
+  generates a fresh 32-byte secret and invalidates any previous controller.
+- Five failed PIN attempts cause a 60-second in-memory pairing block.
+- Windows stores each per-Pi secret in a DPAPI CurrentUser vault. The shared
+  store login therefore gets passwordless daily operation without making the
+  secret portable to another Windows profile.
+- Every post-pairing mutation, including Wi-Fi, media, kiosk, tournament,
+  playlist, rename, update, and delivery reset, is HMAC signed and uses a
+  durable monotonic counter. Pairing is the sole unsigned state change.
+- `POST /api/pair`, `GET /api/pair/status`, and
+  `POST /api/prepare-delivery` reject callers outside `10.55.0.0/24`.
+  Prepare for delivery additionally requires the current controller signature.
+- Read/display endpoints remain public. Plain HTTP is confined to the physical
+  USB link or the intended store LAN; authentication does not add encryption.
+- No insecure or legacy mutation mode exists.
 
 ## Architecture
 
 ```
-BUILDER (pre-image, once per unit):
-  bake into the SD image:
-    • USB NCM gadget on boot  (dwc2 + configfs NCM, fixed usb0 IP 10.55.0.1/24,
-      tiny dnsmasq handing the PC 10.55.0.10-20)
-    • agent already listens on 0.0.0.0:8080 -> reachable over usb0
-    • agent WiFi endpoints (/api/wifi, /api/wifi/status)
-    • sudoers: pi may run nmcli without password
+BUILDER
+  install.sh
+  provision-usb.sh -> stable DeviceId + one-time RECOVERY_PIN
+  label case
+  USB pair builder laptop
+  join builder Wi-Fi
+  perform full Wi-Fi acceptance
+  USB Prepare for delivery
 
-CUSTOMER:
-  Pi 4 --USB-C data cable--> Windows 11 PC   (PC powers Pi, carries data)
-        Pi enumerates as a USB network adapter (NCM, native driver)
-
-  App "Add a Pi" wizard:
-    1. detect Pi over USB   ->  GET http://10.55.0.1:8080/api/status
-    2. enter SSID + password
-    3. "Connect to WiFi"    ->  POST http://10.55.0.1:8080/api/wifi {ssid,password}
-    4. confirm              ->  poll GET /api/wifi/status until connected/failed
-    5. show success + the Pi's new WiFi IP  (or failure reason)
+STORE
+  Pi --USB-C data cable--> shared Windows login
+  detect 10.55.0.1
+  GET /api/pair/status
+  enter bottom-label PIN
+  POST /api/pair
+  save secret in DPAPI vault
+  signed POST /api/wifi
+  poll public GET /api/wifi/status
+  verify /api/status DeviceId
+  unplug USB; continue passwordlessly over store Wi-Fi
 ```
 
-The USB link and WiFi coexist (`usb0` + `wlan0`), so the wizard keeps talking to
-the Pi over USB to confirm `wlan0` obtained an IP.
+The NCM gadget has fixed Pi address `10.55.0.1/24`; dnsmasq leases the Windows
+adapter an address in `10.55.0.10-20`. The agent listens on `0.0.0.0:8080`.
+NetworkManager owns `wlan0`; the agent user may execute only
+`sudo /usr/bin/nmcli` without a password.
 
-## Components
+## Builder setup
 
-### 1. Pre-image provisioning (builder, baked into the SD image)
+1. Run `install.sh`, then `provision-usb.sh`.
+2. Capture the one-time `RECOVERY_PIN` output and attach the exact PIN to the
+   bottom label.
+3. Reboot and pair the builder laptop over USB.
+4. Join builder Wi-Fi through the wizard.
+5. Confirm the stable device ID matches over USB and Wi-Fi.
+6. Run the media, tournament, kiosk, timer, and update acceptance suite over
+   Wi-Fi.
+7. Reconnect USB and choose **Prepare for delivery**.
+8. Confirm the Pi is gone from the builder list and its former credential now
+   receives 401.
 
-Added to `pi-setup/` as a provisioning step (script + config files applied when
-preparing an image). Establishes:
+Builder pairing is temporary trust for testing, not permanent client ownership.
 
-- **USB gadget (NCM):** `dtoverlay=dwc2` in `config.txt`; a `systemd` unit that,
-  at boot, sets up a configfs USB NCM gadget and assigns `usb0` a static
-  `10.55.0.1/24`.
-- **DHCP for the PC:** a minimal `dnsmasq` (or `NetworkManager` shared mode) on
-  `usb0` handing the PC an address in `10.55.0.10-20` so the PC's USB adapter
-  auto-configures.
-- **nmcli permission:** a sudoers drop-in so the agent (running as the `pi`
-  user) may run `sudo nmcli ...` non-interactively.
-- The agent service already binds `0.0.0.0:8080`, so it is reachable at
-  `10.55.0.1:8080` over USB with no rebind.
+## Store onboarding and Ownership recovery
 
-### 2. Agent — WiFi endpoints (`agent/main.py`)
+The same wizard handles both flows:
 
-- `POST /api/wifi` — body `{ "ssid": str, "password": str }`. Runs
-  `sudo nmcli dev wifi connect "<ssid>" password "<pwd>" ifname wlan0` via an
-  async subprocess with a server-side timeout (~30s). Returns
-  `{ "ok": bool, "connected": bool, "ip": str|null, "error": str|null }`.
-  Never logs the password.
-- `GET /api/wifi/status` — returns the current WiFi state, parsed from
-  `nmcli -t -f GENERAL.STATE,IP4.ADDRESS dev show wlan0` (and the active SSID):
-  `{ "connected": bool, "ssid": str|null, "ip": str|null }`. Used by the wizard
-  to poll for confirmation and to read the Pi's LAN address after joining.
+1. Detect the Pi on USB and read its stable identity/current pairing state.
+2. Require the bottom-label PIN unless this same Windows controller already has
+   the matching credential from a previous Wi-Fi attempt.
+3. If another controller is paired, warn that the previous laptop will lose
+   access and require explicit confirmation.
+4. Pair, validate the returned identities, and persist the secret before
+   sending Wi-Fi.
+5. Send the signed Wi-Fi request; poll status over USB.
+6. Save the Pi by stable device ID with its reported Wi-Fi address.
 
-Both shell out through a single helper that runs a command with a timeout and
-returns (rc, stdout, stderr); the password is passed as an argument, never
-written to disk by the agent (NetworkManager owns the profile, root-only).
-
-### 3. Windows app — Add-a-Pi wizard (`windows-app/WifiSetupWindow.xaml` + `.cs`)
-
-A step-through window launched from MainWindow ("Add a Pi"):
-
-1. **Detect** — poll `GET http://10.55.0.1:8080/api/status` until the Pi answers
-   (spinner + "Plug the Pi into this PC with a USB-C cable…"). Timeout → guidance
-   (check cable is a *data* cable, wait for boot).
-2. **Enter WiFi** — `SSID` textbox + `Password` box (show/hide toggle) + a
-   **Connect to WiFi** button (disabled until both filled).
-3. **Connect** — on click: spinner + "Connecting the Pi to <ssid>…"; `POST
-   /api/wifi`; then poll `GET /api/wifi/status` up to ~40s.
-4. **Result** — success: green "Connected — this Pi is on <ssid> at <ip>. You can
-   unplug the USB cable." Failure: red reason (e.g. wrong password / network not
-   found) + **Try again** (back to step 2, credentials retained).
-
-Reuses the existing `HttpClient` pattern. WiFi calls live in a small
-`WifiProvisioner` helper in `signage-core` (net8.0, testable): `DetectAsync`,
-`ConnectAsync(ssid, password)`, `GetStatusAsync`, each against a base URL, so the
-logic is unit-testable and the window stays thin.
+If Wi-Fi fails after pairing, the wizard retains the new credential and lets
+the user correct the Wi-Fi details without replacing ownership again. A
+replacement laptop repeats the USB-plus-PIN flow for each Pi. The old laptop's
+next mutation fails with 401 because its controller ID/secret is no longer
+trusted.
 
 ## Wire contracts
 
 ```
-POST /api/wifi
-  req:  { "ssid": "ShopWiFi", "password": "hunter2" }
-  resp: { "ok": true, "connected": true, "ip": "192.168.1.42", "error": null }
-     or { "ok": false, "connected": false, "ip": null, "error": "Secrets were required, but not provided" }
+GET /api/pair/status                    USB only
+  { "device_id": "...", "paired": true|false,
+    "controller_id": "..."|null }
 
-GET /api/wifi/status
-  resp: { "connected": true, "ssid": "ShopWiFi", "ip": "192.168.1.42" }
-     or { "connected": false, "ssid": null, "ip": null }
+POST /api/pair                          USB + PIN bootstrap
+  { "recovery_pin": "12345678", "controller_id": "..." }
+  -> { "device_id": "...", "controller_id": "...",
+       "controller_secret": "<base64 32 bytes>" }
+
+POST /api/wifi                          signed control request
+  { "ssid": "ShopWiFi", "password": "..." }
+  -> { "ok": true, "connected": true,
+       "ip": "192.168.1.42", "error": null }
+
+GET /api/wifi/status                    public read
+  { "connected": true, "ssid": "ShopWiFi",
+    "ip": "192.168.1.42" }
 ```
+
+Signed requests include `X-PiSignage-Controller`, `X-PiSignage-Counter`,
+`X-PiSignage-Entity-SHA256`, and `X-PiSignage-Signature`. The canonical value
+is the controller ID, decimal counter, uppercase method, exact path/query, and
+lowercase entity SHA-256 separated by newlines. The Pi durably accepts only a
+counter greater than the last accepted counter. Multipart requests defer
+counter acceptance until the uploaded bytes match the signed entity hash.
+
+## Prepare for delivery
+
+The Windows action is deliberately destructive and requires:
+
+1. a selected saved Pi with stable identity and local credential;
+2. that exact Pi connected over USB;
+3. matching USB-reported device/controller identities;
+4. the current signed controller credential;
+5. warning confirmation plus the literal text `PREPARE`.
+
+The Pi clears media, persists an empty playlist, persists an empty
+dashboard/timer, removes the temporary name, deletes every NetworkManager
+wireless profile, and clears controller trust strictly last. Installed
+software, USB gadget provisioning, device ID, and PIN verifier survive.
+Mutations are serialized so pairing or another controller request cannot race
+the reset.
+
+If Pi-side reset fails, controller trust remains so the builder can repair and
+retry. Only after confirmed Pi success does Windows attempt all local cleanup:
+credential, saved device, remembered identity, and thumbnail cache. Local
+cleanup errors are aggregated; they do not misreport the already-reset Pi as
+unsafe for delivery.
 
 ## Failure handling
 
-- **USB not detected:** wizard keeps polling with clear guidance; the top
-  suspect is a charge-only cable — say so explicitly.
-- **Wrong password / SSID not found:** surfaced from `nmcli` stderr as a plain
-  message; **Try again** keeps the entered SSID.
-- **Connect timeout:** report "couldn't confirm within 40s" and offer retry;
-  `nmcli` call is bounded server-side so the agent never hangs.
-- **NCM driver doesn't enumerate (older Windows):** documented limitation;
-  fallback options (serial/RNDIS) noted for a future iteration.
+- USB not found: keep polling, then suggest a data-capable cable and enough boot
+  time.
+- Wrong PIN: return 401 without revealing which comparison failed.
+- Five wrong PINs: return 429 with `Retry-After` during the 60-second block.
+- Replacement declined: leave the existing controller untouched.
+- Wrong SSID/password or connect timeout: retain the successful pairing and
+  offer Wi-Fi retry.
+- Identity changes during setup: fail closed without saving the device.
+- Malformed NetworkManager enumeration or any profile deletion failure: fail
+  Prepare for delivery before clearing controller trust.
+- NCM does not enumerate: Windows 11 NCM is the supported v1 path; RNDIS/serial
+  remain future fallbacks.
 
-## Security
+## Verification and pending hardware acceptance
 
-- Password handled only over the local USB link; never logged by the agent;
-  stored solely in NetworkManager's root-owned system-connection (0600).
-- No external transmission. Agent remains unauthenticated by design (physical
-  USB / LAN only), consistent with the existing system.
+Automated tests cover USB source enforcement, PIN format/throttling, ownership
+replacement, stable identity, DPAPI persistence, signed Wi-Fi, replay
+protection, cancellation, reset ordering, Wi-Fi profile deletion, and local
+cleanup residue.
 
-## Testing / verification
+Release acceptance still requires a real Pi 4 and two Windows profiles/laptops.
+Use the checklists in `README.md`; record observed HTTP 401/409/429 results and
+the before/after stable device ID. Lack of reachable hardware is a pending
+release gate, not an automated-test failure.
 
-- **Agent (pytest):** `/api/wifi` and `/api/wifi/status` with the `nmcli` call
-  mocked (monkeypatch the subprocess helper) — asserts success maps to
-  `connected/ip`, a non-zero `nmcli` maps to `ok:false` + `error`, and the
-  password never appears in logs. A guarded live test (skipped unless a real
-  wlan is present) is out of scope for CI.
-- **signage-core (xUnit):** `WifiProvisioner` against a stub HTTP server —
-  `ConnectAsync` posts the right body, `GetStatusAsync` parses the response,
-  `DetectAsync` returns true only on a 200.
-- **End-to-end (manual, real Pi 4):** pre-image a unit, plug USB-C into a Win11
-  PC, run the wizard, enter real WiFi, confirm the Pi joins and reports its LAN
-  IP; then unplug and reach it over LAN via the normal Scan/Connect.
-- **Regression:** existing agent endpoints, dashboard, kiosk unchanged.
+## Non-goals
 
-## Follow-ons (not in this spec)
-
-- Nearby-SSID scan (`nmcli dev wifi list`) → pick from a dropdown.
-- Persistent named saved-device list (reconnect by name; wraps this wizard).
-- Serial-gadget fallback for PCs where NCM won't enumerate.
+- Multiple simultaneous Controller laptops
+- Unattended remote access
+- RNDIS or serial fallback
+- Captive-portal/hotspot provisioning
+- Remote PIN-only ownership transfer

@@ -1,124 +1,156 @@
-# HTTP Agent Update (no SSH) — Design
+# Authenticated HTTP Agent Update — Implemented Design
 
-Date: 2026-07-24
-Status: Approved
+**Date:** 2026-07-24
+**Security lifecycle revision:** 2026-07-25
+**Status:** Implemented; real-Pi update acceptance remains a release gate
 
-## Problem
+## Problem and outcome
 
-Updating the Pi agent today requires `deploy-agent.ps1`, which uses ssh/scp.
-The SSH password prompt freezes the Claude Code chat terminal, and the client
-has no way to update Pis at all. We want agent updates pushed over the same
-HTTP channel the control app already uses.
+The builder and client need to update paired Display Pis without interactive
+SSH. The developer script and Windows app now send the same complete,
+authenticated agent bundle over HTTP. The endpoint is a normal signed control
+request: an unpaired laptop or unsigned LAN caller cannot install code.
 
-## Goals
+Dependency, Pi setup, systemd, and OS changes remain outside this mechanism and
+require builder-managed deployment.
 
-- Push agent updates (main.py + static pages) to Pis over HTTP — no SSH, no
-  password prompt.
-- Dev path: a rewritten `deploy-agent.ps1` that works from any terminal,
-  including Claude Code chat.
-- Client path: an "Update Pi software" feature in the Windows control app, with
-  the agent files bundled inside the exe, so shipping a new exe is all the
-  client needs.
+## Approved bundle
 
-## Non-goals
+Every accepted archive must contain exactly the managed Python modules plus
+static content:
 
-- Updating the Python venv / dependencies (requirements.txt changes still go
-  over SSH; they are rare).
-- Updating pi-setup scripts, systemd units, or the OS.
-- Auth on the endpoint (see Security).
-- Automatic rollback / canary machinery (see Failure handling).
+```
+main.py
+trust.py
+control_auth.py
+delivery_reset.py
+static/**
+```
 
-## Design
+The WPF project embeds only these paths. `AgentBundle` filters unexpected
+resources, and `deploy-agent.ps1` stages only the same allowlist. `main.py`
+contains the single `AGENT_VERSION` value used by the app/script to confirm the
+update after restart.
 
-### 1. Agent: `POST /api/update`
+## Authentication and transport
 
-Multipart upload of a single zip containing only `main.py` and `static/*`.
+`POST /api/update` requires the current per-device controller secret. The
+caller reserves and durably saves a monotonic counter before network I/O, then
+signs:
 
-Validation, in order, before any file is touched:
+```
+controller_id
+counter
+POST
+/api/update
+sha256(zip bytes)
+```
 
-1. Zip entries must be `main.py` or paths under `static/`. Reject `..`,
-   absolute paths, drive letters, symlinks — anything else.
-2. Total uncompressed size cap: 20 MB.
-3. Extract to a temp dir inside the agent directory (same filesystem, so the
-   final move is atomic-ish).
-4. `py_compile` the new `main.py`. A syntax error must never brick a Pi that
-   is now hard to SSH into — reject with the compile error in the response.
+The entity hash is sent separately from multipart framing, so both C# and
+PowerShell bind the signature to the exact ZIP bytes. The agent verifies the
+HMAC first, streams and hashes at most 20 MB of compressed content, compares
+the uploaded bytes with the signed entity hash, and only then consumes the
+counter. Reusing the accepted request/counter returns 409; a stale controller
+returns 401.
 
-Apply:
+HTTP provides no confidentiality. Updates are intended for the physical USB
+link or controlled store LAN, but authenticity and integrity do not depend on
+LAN trust.
 
-1. Copy current `main.py` + `static/` to `agent/update-backup/` (overwrite
-   previous backup — one level of history is enough for manual recovery).
-2. Move new files into place.
-3. Respond `{"ok": true, "version": "<new AGENT_VERSION>"}`.
-4. Background task after ~1 s: restart the kiosk user service (existing
-   `systemctl --user` helper — makes the TV pick up new static pages), then
-   `os._exit(0)`. systemd (`Restart=always`, `RestartSec=3`) relaunches the
-   agent with the new code. No sudo required anywhere.
+## Agent validation and transactional installation
 
-Versioning: new module-level constant `AGENT_VERSION` (date-based string, e.g.
-`"2026.07.24.1"`), returned by `/api/status` as `agent_version`. Callers use it
-to detect "out of date" and to confirm an update took.
+Before changing installed code, the agent:
 
-### 2. Dev deploy: rewrite `deploy-agent.ps1`
+1. rejects compressed uploads over 20 MB;
+2. opens the ZIP and rejects absolute paths, drive letters, backslashes,
+   traversal, empty/dot segments, duplicate names, file/directory collisions,
+   and unapproved files/folders;
+3. requires all four root modules and static content;
+4. rejects total uncompressed content over 20 MB;
+5. extracts to a temporary directory on the same filesystem;
+6. compiles every managed Python module;
+7. reads the proposed `AGENT_VERSION`;
+8. builds `update-backup/` from the complete currently installed bundle.
 
-Same interface as today (`-Hosts`, or the saved devices list from
-`%APPDATA%\PiSignage\devices.json`). New body per host:
+Installation moves each managed path into a rollback directory and replaces it
+from staging. Any move failure restores every touched path in reverse order.
+The endpoint reports whether rollback itself was incomplete rather than
+claiming the old version was restored. On success it returns the new version,
+restarts the kiosk after the response can flush, and exits so systemd relaunches
+the agent.
 
-1. Zip `agent/main.py` + `agent/static/` (built once, in temp).
-2. `POST /api/update` via `Invoke-RestMethod`.
-3. Poll `/api/status` (timeout ~60 s) until the agent is back and reports the
-   new `agent_version`.
-4. Report per-host success/failure; nonzero exit if any host failed.
+`update-backup/` remains a one-level recovery snapshot for manual support. The
+transactional rollback handles install-time failures; a syntactically valid
+but runtime-broken release can still require attended repair.
 
-No ssh/scp anywhere in the script.
+## Developer deployment
 
-Bootstrap: the deploy that first ships `/api/update` must itself go over SSH
-once per Pi (run from a normal terminal, not Claude Code chat). After that,
-SSH is no longer part of the update path.
+`deploy-agent.ps1` uses the current Windows user's saved device list and
+DPAPI-protected credential vault.
 
-### 3. Windows app: admin update UI
+1. Resolve each target to exactly one saved Pi by address, hostname, or name.
+2. Display name, stable device ID, bundled version, and pairing state.
+3. Refuse the entire run if any target lacks a saved paired credential.
+4. In `-WhatIf`, stop before bundle creation, counter reservation, credential
+   writes, or network activity.
+5. Build one approved ZIP.
+6. For each Pi, reserve its counter, sign the ZIP, and POST `/api/update`.
+7. Poll public `/api/status` for up to 60 seconds until the expected
+   `agent_version` appears.
+8. Continue across per-Pi failures and exit nonzero if any target failed.
 
-- Build: the csproj embeds `../agent/main.py` and `../agent/static/**` as
-  embedded resources. The app reads its bundled `AGENT_VERSION` by regex from
-  the embedded main.py at runtime — main.py is the single source of truth and
-  there is no build-time version step.
-- The app zips the embedded files at runtime when pushing (keeps the build
-  simple; no build-time zip step).
-- When the connected Pi's `/api/status.agent_version` differs from the bundled
-  version, an **Update Pi software** button appears. One click updates every
-  saved Pi that is reachable and out of date (skips off/unreachable Pis and
-  up-to-date ones). Waits for each Pi to come back (same poll as the script),
-  reports in plain language ("TV will blink once while it updates"). Errors
-  are shown in plain language too — the client is non-technical.
-  *(Simplified during planning from per-device + update-all buttons: one
-  button that converges every reachable Pi is less UI and covers both cases
-  for a ~4-Pi fleet.)*
-- Old agents (no `agent_version` in status): treat as out of date; the update
-  push will 404 until the Pi is bootstrapped over SSH once — show "this Pi
-  needs a one-time manual update" rather than a raw error.
+There is no SSH/SCP path in this script.
 
-### 4. Security
+## Windows client update
 
-`/api/update` accepts code from anyone on the LAN. This matches the existing
-phase-1 posture: the API is deliberately unauthenticated on a trusted LAN and
-already exposes sudo-backed WiFi changes and kiosk stop. Decision: no auth
-now; phase 2's planned token auth must cover this endpoint along with the
-rest. This endpoint is the most powerful one — it is called out in the README
-known-limits list.
+The self-contained controller executable embeds the approved bundle. When a
+saved, reachable, paired Pi reports a different version, the app can update it
+using the credential for that stable device ID. Targets with no credential are
+shown as requiring pairing instead of receiving an attempted mutation.
+
+The app uses the same canonical HMAC fields and hashes the ZIP bytes, not the
+multipart envelope. It waits for the agent to return at the embedded version
+and explains that the TV can blink once while the kiosk/agent restart.
+
+## Ownership lifecycle
+
+- During Builder setup, the builder pairs by USB, joins builder Wi-Fi, and
+  exercises the update path over Wi-Fi.
+- Prepare for delivery removes the builder credential from the Pi and then
+  attempts to remove it from the builder laptop. A delivery-ready Pi therefore
+  rejects subsequent builder-signed updates.
+- Store onboarding pairs the shared Controller laptop, which can then update
+  the Pi without a password prompt.
+- Ownership recovery rotates the controller secret. The retired laptop's
+  update request receives 401 even if it still holds its old secret.
+- Remote support uses attended Quick Assist on the Controller laptop. It does
+  not add a second controller or copy credentials.
 
 ## Failure handling
 
-- Bad zip / oversized / syntax error → 400, nothing changed on the Pi.
-- Runtime (non-syntax) crash after update → systemd restart-loops the agent;
-  recovery is manual: SSH in, restore from `agent/update-backup/`. Accepted
-  for phase 1; py_compile catches the common case.
-- Pi unreachable / times out during poll → reported per host; other hosts
-  continue.
+- Missing/extra/unsafe archive content, size limit, hash mismatch, or syntax
+  error: 400 with installed files unchanged.
+- Missing/invalid controller signature: 401.
+- Replayed counter: 409.
+- Install move failure with successful rollback: 500 and previous managed
+  bundle restored.
+- Rollback failure: 500 with an explicit incomplete-rollback message and
+  critical log.
+- Pi does not return at the expected version: report per target; do not hide
+  failures behind success for other Pis.
+- Dependency/setup/OS change: not accepted in the bundle; use a
+  builder-managed maintenance path.
 
-## Testing
+## Verification and pending hardware acceptance
 
-- Agent: pytest coverage for the validation matrix (traversal names, absolute
-  paths, oversize, syntax-error main.py, happy path writes files + schedules
-  restart). Restart/exit is mocked.
-- Script + app push: exercised against the WSL/VM agent (existing dev loop).
-- App: version-compare logic unit-testable; UI flow tested manually against VM.
+Automated tests cover archive allowlisting, traversal/collision cases, both
+size limits, signed byte integrity, replay, missing/stale credentials,
+PowerShell `-WhatIf`, embedded bundle contents, complete backup, move rollback,
+and post-update version polling behavior.
+
+Release acceptance still requires a reachable real Pi: install an update over
+Wi-Fi, observe the temporary restart, verify the expected version returns, send
+an unsigned update and record 401, and replay an accepted signed request to
+record 409. Use the complete builder/store checklists in `README.md`. Hardware
+unavailability leaves this acceptance gate pending; it is not evidence that the
+automated update regression failed.
