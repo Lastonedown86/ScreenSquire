@@ -19,8 +19,12 @@ def _zip_bytes(entries: dict[str, str]) -> bytes:
     return buf.getvalue()
 
 
-def _post(client, data: bytes):
-    return client.post("/api/update", files={"file": ("update.zip", data, "application/zip")})
+def _post(signed, data: bytes):
+    return signed(
+        "POST",
+        "/api/update",
+        files={"file": ("update.zip", data, "application/zip")},
+    )
 
 
 def _fake_app_dir(agent_module, tmp_path, monkeypatch):
@@ -34,52 +38,52 @@ def _fake_app_dir(agent_module, tmp_path, monkeypatch):
     return tmp_path
 
 
-def test_update_rejects_non_zip(agent_module, client, tmp_path, monkeypatch):
+def test_update_rejects_non_zip(agent_module, signed, tmp_path, monkeypatch):
     _fake_app_dir(agent_module, tmp_path, monkeypatch)
-    r = _post(client, b"this is not a zip")
+    r = _post(signed, b"this is not a zip")
     assert r.status_code == 400
 
 
-def test_update_rejects_traversal_and_stray_files(agent_module, client, tmp_path, monkeypatch):
+def test_update_rejects_traversal_and_stray_files(agent_module, signed, tmp_path, monkeypatch):
     _fake_app_dir(agent_module, tmp_path, monkeypatch)
     for bad in ("../evil.py", "requirements.txt", "static/../../evil.py"):
-        r = _post(client, _zip_bytes({"main.py": GOOD_MAIN, bad: "x"}))
+        r = _post(signed, _zip_bytes({"main.py": GOOD_MAIN, bad: "x"}))
         assert r.status_code == 400, bad
     assert (tmp_path / "main.py").read_text() == "OLD = 1\n"  # untouched
 
 
-def test_update_rejects_traversal_directory_entry(agent_module, client, tmp_path, monkeypatch):
+def test_update_rejects_traversal_directory_entry(agent_module, signed, tmp_path, monkeypatch):
     _fake_app_dir(agent_module, tmp_path, monkeypatch)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("main.py", GOOD_MAIN)
         zf.writestr(zipfile.ZipInfo("static/../../evil/"), "")  # pure directory entry
-    r = _post(client, buf.getvalue())
+    r = _post(signed, buf.getvalue())
     assert r.status_code == 400
     assert (tmp_path / "main.py").read_text() == "OLD = 1\n"  # untouched
 
 
-def test_update_requires_main_py(agent_module, client, tmp_path, monkeypatch):
+def test_update_requires_main_py(agent_module, signed, tmp_path, monkeypatch):
     _fake_app_dir(agent_module, tmp_path, monkeypatch)
-    assert _post(client, _zip_bytes({"static/kiosk.html": "<new>"})).status_code == 400
+    assert _post(signed, _zip_bytes({"static/kiosk.html": "<new>"})).status_code == 400
 
 
-def test_update_rejects_oversize(agent_module, client, tmp_path, monkeypatch):
+def test_update_rejects_oversize(agent_module, signed, tmp_path, monkeypatch):
     _fake_app_dir(agent_module, tmp_path, monkeypatch)
     monkeypatch.setattr(agent_module, "_UPDATE_MAX_BYTES", 10)
-    assert _post(client, _zip_bytes({"main.py": GOOD_MAIN * 100})).status_code == 400
+    assert _post(signed, _zip_bytes({"main.py": GOOD_MAIN * 100})).status_code == 400
 
 
-def test_update_rejects_syntax_error(agent_module, client, tmp_path, monkeypatch):
+def test_update_rejects_syntax_error(agent_module, signed, tmp_path, monkeypatch):
     _fake_app_dir(agent_module, tmp_path, monkeypatch)
-    r = _post(client, _zip_bytes({"main.py": "def broken(:\n"}))
+    r = _post(signed, _zip_bytes({"main.py": "def broken(:\n"}))
     assert r.status_code == 400
     assert (tmp_path / "main.py").read_text() == "OLD = 1\n"  # untouched
 
 
-def test_update_happy_path_swaps_files_and_backs_up(agent_module, client, tmp_path, monkeypatch):
+def test_update_happy_path_swaps_files_and_backs_up(agent_module, signed, tmp_path, monkeypatch):
     _fake_app_dir(agent_module, tmp_path, monkeypatch)
-    r = _post(client, _zip_bytes({"main.py": GOOD_MAIN, "static/kiosk.html": "<new>"}))
+    r = _post(signed, _zip_bytes({"main.py": GOOD_MAIN, "static/kiosk.html": "<new>"}))
     assert r.status_code == 200
     assert r.json() == {"ok": True, "version": "9999.01.01.1"}
     assert (tmp_path / "main.py").read_text() == GOOD_MAIN

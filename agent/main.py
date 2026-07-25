@@ -14,6 +14,8 @@ Run for development:
 """
 
 import asyncio
+import base64
+import ipaddress
 import io
 import json
 import logging
@@ -31,10 +33,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
 from typing import Literal, Optional
 
-from fastapi import FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+
+from control_auth import VerifiedControl, require_control, verify_uploaded_entity
+from trust import PairingBlocked, TrustStore
 
 log = logging.getLogger("signage")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -46,7 +51,8 @@ MEDIA_DIR = DATA_DIR / "media"
 PLAYLIST_FILE = DATA_DIR / "playlist.json"
 PORT = int(os.environ.get("SIGNAGE_PORT", "8080"))
 NAME_FILE = DATA_DIR / "name.txt"
-AGENT_VERSION = "2026.07.24.2"  # bump on every agent change; the app compares this
+TRUST_FILE = DATA_DIR / "trust.json"
+AGENT_VERSION = "2026.07.25.1"  # bump on every agent change; the app compares this
 
 
 def _load_name() -> str:
@@ -123,6 +129,7 @@ class State:
 
 
 state = State()
+trust_store = TrustStore(TRUST_FILE)
 
 # ---------------------------------------------------------------- websocket hub
 class Hub:
@@ -282,6 +289,57 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Pi Signage Agent", version="0.1.0", lifespan=lifespan)
+app.state.trust_store = trust_store
+
+
+USB_NET = ipaddress.ip_network("10.55.0.0/24")
+
+
+def require_usb(request: Request) -> None:
+    try:
+        if request.client is None:
+            raise ValueError
+        address = ipaddress.ip_address(request.client.host)
+    except ValueError:
+        raise HTTPException(403, "USB connection required") from None
+    if address not in USB_NET:
+        raise HTTPException(403, "USB connection required")
+
+
+class PairRequest(BaseModel):
+    recovery_pin: str = Field(pattern=r"^\d{8}$")
+    controller_id: str = Field(min_length=16, max_length=64)
+
+
+@app.post("/api/pair")
+async def pair_controller(req: PairRequest, request: Request):
+    require_usb(request)
+    try:
+        result = trust_store.pair(req.recovery_pin, req.controller_id)
+    except ValueError:
+        raise HTTPException(401, "Invalid recovery PIN") from None
+    except PairingBlocked as exc:
+        raise HTTPException(
+            429,
+            "Pairing temporarily blocked",
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from None
+    return {
+        "device_id": trust_store.device_id,
+        "controller_id": req.controller_id,
+        "controller_secret": base64.b64encode(result.secret).decode("ascii"),
+    }
+
+
+@app.get("/api/pair/status")
+async def pair_status(request: Request):
+    require_usb(request)
+    controller_id = trust_store.controller_id
+    return {
+        "device_id": trust_store.device_id,
+        "paired": controller_id is not None,
+        "controller_id": controller_id,
+    }
 
 
 # ---- kiosk page + media ----
@@ -323,7 +381,7 @@ def _load_dashboard() -> dict:
 _dashboard: dict = _load_dashboard()
 
 
-@app.post("/api/dashboard")
+@app.post("/api/dashboard", dependencies=[Depends(require_control)])
 async def set_dashboard(payload: DashboardPayload):
     global _dashboard
     prev = _dashboard or {}
@@ -408,7 +466,7 @@ async def _wlan_ssid() -> Optional[str]:
     return None
 
 
-@app.post("/api/wifi")
+@app.post("/api/wifi", dependencies=[Depends(require_control)])
 async def set_wifi(req: WifiRequest):
     rc, out, err = await _run(
         ["sudo", "nmcli", "dev", "wifi", "connect", req.ssid,
@@ -450,7 +508,7 @@ async def kiosk_status():
     return {"running": out.strip() == "active"}
 
 
-@app.post("/api/kiosk")
+@app.post("/api/kiosk", dependencies=[Depends(require_control)])
 async def set_kiosk(req: KioskRequest):
     rc, out, err = await _systemctl_user("start" if req.running else "stop", KIOSK_UNIT)
     if rc != 0:
@@ -474,7 +532,11 @@ async def _restart_after_update() -> None:
 
 
 @app.post("/api/update")
-async def update_agent(file: UploadFile):
+async def update_agent(
+    file: UploadFile,
+    control: VerifiedControl = Depends(require_control),
+):
+    await verify_uploaded_entity(file, control.entity_sha256)
     data = await file.read()
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
@@ -547,7 +609,7 @@ class RenameRequest(BaseModel):
     name: str = Field(min_length=1, max_length=64)
 
 
-@app.post("/api/name")
+@app.post("/api/name", dependencies=[Depends(require_control)])
 async def set_name(req: RenameRequest):
     """Rename this Pi. Persists across restarts and refreshes the TV splash."""
     global DEVICE_NAME
@@ -568,6 +630,8 @@ async def set_name(req: RenameRequest):
 async def status():
     return {
         "name": DEVICE_NAME,
+        "device_id": trust_store.device_id,
+        "paired": trust_store.controller_id is not None,
         "version": app.version,
         "agent_version": AGENT_VERSION,
         "screens_connected": len(hub.clients),
@@ -583,7 +647,7 @@ async def get_playlist():
     return state.playlist
 
 
-@app.put("/api/playlist")
+@app.put("/api/playlist", dependencies=[Depends(require_control)])
 async def put_playlist(playlist: Playlist):
     # validate media references exist before accepting
     for item in playlist.items:
@@ -600,7 +664,11 @@ async def put_playlist(playlist: Playlist):
 
 
 @app.post("/api/media")
-async def upload_media(file: UploadFile):
+async def upload_media(
+    file: UploadFile,
+    control: VerifiedControl = Depends(require_control),
+):
+    await verify_uploaded_entity(file, control.entity_sha256)
     name = Path(file.filename or "upload").name  # strip any path components
     ext = Path(name).suffix.lower()
     if ext not in ALLOWED_UPLOAD_EXT:
@@ -632,7 +700,7 @@ async def list_media():
     return {"files": files}
 
 
-@app.delete("/api/media/{name}")
+@app.delete("/api/media/{name}", dependencies=[Depends(require_control)])
 async def delete_media(name: str):
     safe = Path(name).name
     target = MEDIA_DIR / safe
@@ -648,7 +716,7 @@ async def delete_media(name: str):
     return {"ok": True}
 
 
-@app.post("/api/media/{name}/detach")
+@app.post("/api/media/{name}/detach", dependencies=[Depends(require_control)])
 async def detach_media(name: str):
     """Stop displaying a file: pull it out of the playlist and off any
     dashboard board, so it can then be deleted or replaced."""
@@ -676,7 +744,7 @@ class RenameMediaRequest(BaseModel):
     new_name: str  # base name without extension; extension is preserved
 
 
-@app.post("/api/media/{name}/rename")
+@app.post("/api/media/{name}/rename", dependencies=[Depends(require_control)])
 async def rename_media(name: str, req: RenameMediaRequest):
     safe = Path(name).name
     src = MEDIA_DIR / safe
@@ -712,7 +780,7 @@ async def rename_media(name: str, req: RenameMediaRequest):
     return {"ok": True, "name": new_full}
 
 
-@app.post("/api/show-now")
+@app.post("/api/show-now", dependencies=[Depends(require_control)])
 async def show_now(req: ShowNowRequest):
     if req.type in ("image", "video") and not (MEDIA_DIR / Path(req.source).name).exists():
         raise HTTPException(400, f"Media file not found: {req.source}")
@@ -725,7 +793,7 @@ async def show_now(req: ShowNowRequest):
     return {"ok": True}
 
 
-@app.delete("/api/show-now")
+@app.delete("/api/show-now", dependencies=[Depends(require_control)])
 async def clear_show_now():
     state.override = None
     state.override_until = None
@@ -733,7 +801,7 @@ async def clear_show_now():
     return {"ok": True}
 
 
-@app.post("/api/next")
+@app.post("/api/next", dependencies=[Depends(require_control)])
 async def skip_next():
     state.index = (state.index + 1) % max(len(state.playlist.items), 1)
     state.bump()
