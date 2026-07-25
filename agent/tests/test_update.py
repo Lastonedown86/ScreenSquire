@@ -1,13 +1,7 @@
-import main
-from fastapi.testclient import TestClient
-
-client = TestClient(main.app)
-
-
-def test_status_reports_agent_version():
+def test_status_reports_agent_version(agent_module, client):
     body = client.get("/api/status").json()
-    assert body["agent_version"] == main.AGENT_VERSION
-    assert main.AGENT_VERSION  # non-empty
+    assert body["agent_version"] == agent_module.AGENT_VERSION
+    assert agent_module.AGENT_VERSION  # non-empty
 
 
 import io
@@ -25,67 +19,67 @@ def _zip_bytes(entries: dict[str, str]) -> bytes:
     return buf.getvalue()
 
 
-def _post(data: bytes):
+def _post(client, data: bytes):
     return client.post("/api/update", files={"file": ("update.zip", data, "application/zip")})
 
 
-def _fake_app_dir(tmp_path, monkeypatch):
+def _fake_app_dir(agent_module, tmp_path, monkeypatch):
     (tmp_path / "static").mkdir()
     (tmp_path / "main.py").write_text("OLD = 1\n")
     (tmp_path / "static" / "kiosk.html").write_text("<old>")
-    monkeypatch.setattr(main, "APP_DIR", tmp_path)
+    monkeypatch.setattr(agent_module, "APP_DIR", tmp_path)
     async def no_restart():
         pass
-    monkeypatch.setattr(main, "_restart_after_update", no_restart)
+    monkeypatch.setattr(agent_module, "_restart_after_update", no_restart)
     return tmp_path
 
 
-def test_update_rejects_non_zip(tmp_path, monkeypatch):
-    _fake_app_dir(tmp_path, monkeypatch)
-    r = _post(b"this is not a zip")
+def test_update_rejects_non_zip(agent_module, client, tmp_path, monkeypatch):
+    _fake_app_dir(agent_module, tmp_path, monkeypatch)
+    r = _post(client, b"this is not a zip")
     assert r.status_code == 400
 
 
-def test_update_rejects_traversal_and_stray_files(tmp_path, monkeypatch):
-    _fake_app_dir(tmp_path, monkeypatch)
+def test_update_rejects_traversal_and_stray_files(agent_module, client, tmp_path, monkeypatch):
+    _fake_app_dir(agent_module, tmp_path, monkeypatch)
     for bad in ("../evil.py", "requirements.txt", "static/../../evil.py"):
-        r = _post(_zip_bytes({"main.py": GOOD_MAIN, bad: "x"}))
+        r = _post(client, _zip_bytes({"main.py": GOOD_MAIN, bad: "x"}))
         assert r.status_code == 400, bad
     assert (tmp_path / "main.py").read_text() == "OLD = 1\n"  # untouched
 
 
-def test_update_rejects_traversal_directory_entry(tmp_path, monkeypatch):
-    _fake_app_dir(tmp_path, monkeypatch)
+def test_update_rejects_traversal_directory_entry(agent_module, client, tmp_path, monkeypatch):
+    _fake_app_dir(agent_module, tmp_path, monkeypatch)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("main.py", GOOD_MAIN)
         zf.writestr(zipfile.ZipInfo("static/../../evil/"), "")  # pure directory entry
-    r = _post(buf.getvalue())
+    r = _post(client, buf.getvalue())
     assert r.status_code == 400
     assert (tmp_path / "main.py").read_text() == "OLD = 1\n"  # untouched
 
 
-def test_update_requires_main_py(tmp_path, monkeypatch):
-    _fake_app_dir(tmp_path, monkeypatch)
-    assert _post(_zip_bytes({"static/kiosk.html": "<new>"})).status_code == 400
+def test_update_requires_main_py(agent_module, client, tmp_path, monkeypatch):
+    _fake_app_dir(agent_module, tmp_path, monkeypatch)
+    assert _post(client, _zip_bytes({"static/kiosk.html": "<new>"})).status_code == 400
 
 
-def test_update_rejects_oversize(tmp_path, monkeypatch):
-    _fake_app_dir(tmp_path, monkeypatch)
-    monkeypatch.setattr(main, "_UPDATE_MAX_BYTES", 10)
-    assert _post(_zip_bytes({"main.py": GOOD_MAIN * 100})).status_code == 400
+def test_update_rejects_oversize(agent_module, client, tmp_path, monkeypatch):
+    _fake_app_dir(agent_module, tmp_path, monkeypatch)
+    monkeypatch.setattr(agent_module, "_UPDATE_MAX_BYTES", 10)
+    assert _post(client, _zip_bytes({"main.py": GOOD_MAIN * 100})).status_code == 400
 
 
-def test_update_rejects_syntax_error(tmp_path, monkeypatch):
-    _fake_app_dir(tmp_path, monkeypatch)
-    r = _post(_zip_bytes({"main.py": "def broken(:\n"}))
+def test_update_rejects_syntax_error(agent_module, client, tmp_path, monkeypatch):
+    _fake_app_dir(agent_module, tmp_path, monkeypatch)
+    r = _post(client, _zip_bytes({"main.py": "def broken(:\n"}))
     assert r.status_code == 400
     assert (tmp_path / "main.py").read_text() == "OLD = 1\n"  # untouched
 
 
-def test_update_happy_path_swaps_files_and_backs_up(tmp_path, monkeypatch):
-    _fake_app_dir(tmp_path, monkeypatch)
-    r = _post(_zip_bytes({"main.py": GOOD_MAIN, "static/kiosk.html": "<new>"}))
+def test_update_happy_path_swaps_files_and_backs_up(agent_module, client, tmp_path, monkeypatch):
+    _fake_app_dir(agent_module, tmp_path, monkeypatch)
+    r = _post(client, _zip_bytes({"main.py": GOOD_MAIN, "static/kiosk.html": "<new>"}))
     assert r.status_code == 200
     assert r.json() == {"ok": True, "version": "9999.01.01.1"}
     assert (tmp_path / "main.py").read_text() == GOOD_MAIN

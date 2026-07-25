@@ -1,20 +1,25 @@
-import os
-import shutil
-import tempfile
+import importlib
+import sys
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 
-_TEST_DATA_DIR = tempfile.mkdtemp(prefix="pi-signage-test-")
-os.environ["SIGNAGE_DATA"] = _TEST_DATA_DIR
-
-import main
-
-
 @pytest.fixture(scope="session")
-def agent_module():
-    return main
+def agent_module(tmp_path_factory):
+    patch = pytest.MonkeyPatch()
+    data_dir = tmp_path_factory.mktemp("signage-data")
+    agent_dir = str(Path(__file__).resolve().parents[1])
+    patch.setenv("SIGNAGE_DATA", str(data_dir))
+    patch.syspath_prepend(agent_dir)
+    sys.modules.pop("main", None)
+    module = importlib.import_module("main")
+    try:
+        yield module
+    finally:
+        sys.modules.pop("main", None)
+        patch.undo()
 
 
 @pytest.fixture(scope="session")
@@ -22,18 +27,14 @@ def client(agent_module):
     return TestClient(agent_module.app)
 
 
-def pytest_sessionfinish(session, exitstatus):
-    shutil.rmtree(_TEST_DATA_DIR, ignore_errors=True)
-
-
 @pytest.fixture
-def media(tmp_path, monkeypatch):
+def media(agent_module, tmp_path, monkeypatch):
     """Isolated media dir + empty playlist/dashboard, seeded with old.jpg."""
-    monkeypatch.setattr(main, "MEDIA_DIR", tmp_path / "media")
-    monkeypatch.setattr(main, "PLAYLIST_FILE", tmp_path / "playlist.json")
-    monkeypatch.setattr(main, "DASHBOARD_FILE", tmp_path / "dashboard.json")
-    main.MEDIA_DIR.mkdir()
-    monkeypatch.setattr(main.state, "playlist", main.Playlist())
-    monkeypatch.setattr(main, "_dashboard", {})
-    (main.MEDIA_DIR / "old.jpg").write_bytes(b"x")
-    return main.MEDIA_DIR
+    monkeypatch.setattr(agent_module, "MEDIA_DIR", tmp_path / "media")
+    monkeypatch.setattr(agent_module, "PLAYLIST_FILE", tmp_path / "playlist.json")
+    monkeypatch.setattr(agent_module, "DASHBOARD_FILE", tmp_path / "dashboard.json")
+    agent_module.MEDIA_DIR.mkdir()
+    monkeypatch.setattr(agent_module.state, "playlist", agent_module.Playlist())
+    monkeypatch.setattr(agent_module, "_dashboard", {})
+    (agent_module.MEDIA_DIR / "old.jpg").write_bytes(b"x")
+    return agent_module.MEDIA_DIR
