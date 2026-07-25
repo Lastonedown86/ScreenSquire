@@ -452,6 +452,7 @@ def test_prepare_delivery_keeps_controller_trust_when_wifi_enumeration_fails(
         "missing-separator",
         ":802-11-wireless",
         "wifi-uuid:",
+        "wifi-uuid:802-11-wireless:unexpected",
     ],
 )
 def test_prepare_delivery_fails_closed_on_malformed_nmcli_row(

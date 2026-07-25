@@ -37,6 +37,8 @@ async def _delete_wifi_profiles(run: CommandRunner) -> None:
     for line in out.splitlines():
         if line == "":
             continue
+        if line.count(":") != 1:
+            raise RuntimeError("NetworkManager returned a malformed connection row.")
         uuid, separator, connection_type = line.partition(":")
         uuid = uuid.strip()
         connection_type = connection_type.strip()
