@@ -207,8 +207,15 @@ public partial class MainWindow : Window
         bool isSaved = CmbAddress.SelectedItem is PiSignage.Signage.SavedDevice;
         if (BtnRename != null) BtnRename.IsEnabled = isSaved;
         if (BtnForget != null) BtnForget.IsEnabled = isSaved;
-        if (BtnPrepareDelivery != null) BtnPrepareDelivery.IsEnabled = isSaved;
+        if (BtnPrepareDelivery != null)
+            BtnPrepareDelivery.IsEnabled = CanPrepareSelectedDevice();
     }
+
+    private bool CanPrepareSelectedDevice() =>
+        CmbAddress.SelectedItem is PiSignage.Signage.SavedDevice device &&
+        DeliveryPreparation.CanPrepare(
+            device,
+            deviceId => _credentialVault.TryGet(deviceId) is not null);
 
     private void CmbAddress_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
@@ -407,55 +414,97 @@ public partial class MainWindow : Window
         SetBusy(true);
         try
         {
-            var context = ControlContext(device.DeviceId);
-            using var http = new HttpClient
+            DeliveryPreparationOutcome outcome;
+            try
             {
-                Timeout = TimeSpan.FromSeconds(15),
-            };
-            var operations = new WindowsDeliveryPreparationOperations(
-                http,
-                _credentialVault,
-                _deviceStore,
-                new PiSignage.Signage.SettingsStore(),
-                App.Settings,
-                ThumbnailCache.ClearDevice);
-            await new DeliveryPreparation(operations).RunAsync(device, context);
-
-            if (string.Equals(
-                    _connectedControlContext?.DeviceId,
-                    device.DeviceId,
-                    StringComparison.Ordinal))
+                var context = ControlContext(device.DeviceId);
+                using var http = new HttpClient
+                {
+                    Timeout = TimeSpan.FromSeconds(15),
+                };
+                var operations = new WindowsDeliveryPreparationOperations(
+                    http,
+                    _credentialVault,
+                    _deviceStore,
+                    new PiSignage.Signage.SettingsStore(),
+                    App.Settings,
+                    ThumbnailCache.ClearDevice);
+                outcome = await new DeliveryPreparation(operations)
+                    .RunAsync(device, context);
+            }
+            catch (Exception ex)
             {
-                _poll.Stop();
-                _api?.Dispose();
-                _api = null;
-                _connectedControlContext = null;
-                _connectedHost = null;
-                MainArea.IsEnabled = false;
-                GettingStarted.Visibility = Visibility.Visible;
-                BtnKiosk.IsEnabled = BtnRemote.IsEnabled = false;
-                BtnKiosk.Content = "_TV display on/off";
-                LblStatus.Text = "Not connected — follow the steps above";
+                Toaster.Show(
+                    "The Pi was not prepared for delivery: " + ex.Message,
+                    ToastKind.Error);
+                return;
             }
 
-            ReloadDevices();
+            // A returned outcome means the Pi reset succeeded. Always leave the
+            // UI in delivery-ready state even if local residue was reported.
+            var residue = outcome.CleanupErrors.ToList();
+            _poll.Stop();
+            var oldApi = _api;
+            _api = null;
+            _connectedControlContext = null;
+            _connectedHost = null;
+            MainArea.IsEnabled = false;
+            GettingStarted.Visibility = Visibility.Visible;
+            BtnKiosk.IsEnabled = BtnRemote.IsEnabled = false;
+            BtnKiosk.Content = "_TV display on/off";
+            LblStatus.Text = "Ready for delivery — unplug the USB cable.";
+            try
+            {
+                oldApi?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                residue.Add(new DeliveryCleanupError("connection", ex.Message));
+            }
+            try
+            {
+                ReloadDevices();
+            }
+            catch (Exception ex)
+            {
+                residue.Add(new DeliveryCleanupError("device view", ex.Message));
+            }
             foreach (var window in OwnedWindows.OfType<SignageWindow>())
-                window.RefreshDevices();
-            Toaster.Show(
-                "Ready for delivery — unplug the USB cable.",
-                ToastKind.Success);
-        }
-        catch (Exception ex)
-        {
-            Toaster.Show(
-                "The Pi was not prepared for delivery: " + ex.Message,
-                ToastKind.Error);
+            {
+                try
+                {
+                    window.RefreshDevices();
+                }
+                catch (Exception ex)
+                {
+                    residue.Add(new DeliveryCleanupError(
+                        "tournament device view",
+                        ex.Message));
+                }
+            }
+
+            if (residue.Count == 0)
+            {
+                Toaster.Show(
+                    "Ready for delivery — unplug the USB cable.",
+                    ToastKind.Success);
+            }
+            else
+            {
+                Toaster.Show(
+                    "Ready for delivery — unplug the USB cable. " +
+                    "The Pi is reset, but some local builder records remain: " +
+                    string.Join(
+                        ", ",
+                        residue.Select(error => error.Operation).Distinct()) +
+                    ".",
+                    ToastKind.Warning);
+            }
         }
         finally
         {
             SetBusy(false);
-            BtnPrepareDelivery.IsEnabled =
-                CmbAddress.SelectedItem is PiSignage.Signage.SavedDevice;
+            BtnPrepareDelivery.IsEnabled = CanPrepareSelectedDevice();
         }
     }
 

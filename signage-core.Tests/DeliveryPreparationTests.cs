@@ -12,7 +12,7 @@ public class DeliveryPreparationTests
         var device = Device("selected-device");
         var context = Context("selected-device");
 
-        await preparation.RunAsync(device, context);
+        var outcome = await preparation.RunAsync(device, context);
 
         Assert.Equal(
             new[]
@@ -27,6 +27,7 @@ public class DeliveryPreparationTests
             operations.Events);
         Assert.Same(context, operations.ResetContext);
         Assert.Same(device, operations.CachedDevice);
+        Assert.Empty(outcome.CleanupErrors);
     }
 
     [Fact]
@@ -89,6 +90,91 @@ public class DeliveryPreparationTests
         Assert.Empty(operations.Events);
     }
 
+    [Theory]
+    [InlineData("credential")]
+    [InlineData("device")]
+    [InlineData("settings")]
+    [InlineData("cache")]
+    public async Task RunAsync_attempts_every_local_cleanup_and_returns_residue(
+        string failingOperation)
+    {
+        var operations = new RecordingOperations();
+        operations.CleanupFailures.Add(failingOperation);
+        var preparation = new DeliveryPreparation(operations);
+
+        var outcome = await preparation.RunAsync(
+            Device("selected-device"),
+            Context("selected-device"));
+
+        Assert.Equal(
+            new[]
+            {
+                "status:http://10.55.0.1:8080",
+                "reset:http://10.55.0.1:8080",
+                "credential:selected-device",
+                "device:selected-device",
+                "settings:selected-device",
+                "cache:selected-device",
+            },
+            operations.Events);
+        var error = Assert.Single(outcome.CleanupErrors);
+        Assert.Equal(failingOperation, error.Operation);
+        Assert.Contains("cleanup failed", error.Message);
+    }
+
+    [Fact]
+    public async Task RunAsync_aggregates_multiple_local_cleanup_failures()
+    {
+        var operations = new RecordingOperations();
+        operations.CleanupFailures.UnionWith(
+            new[] { "credential", "settings", "cache" });
+        var preparation = new DeliveryPreparation(operations);
+
+        var outcome = await preparation.RunAsync(
+            Device("selected-device"),
+            Context("selected-device"));
+
+        Assert.Equal(
+            new[] { "credential", "settings", "cache" },
+            outcome.CleanupErrors.Select(error => error.Operation));
+        Assert.Equal(
+            new[]
+            {
+                "status:http://10.55.0.1:8080",
+                "reset:http://10.55.0.1:8080",
+                "credential:selected-device",
+                "device:selected-device",
+                "settings:selected-device",
+                "cache:selected-device",
+            },
+            operations.Events);
+    }
+
+    [Fact]
+    public void CanPrepare_requires_stable_id_and_matching_vault_credential()
+    {
+        Assert.False(DeliveryPreparation.CanPrepare(
+            null,
+            _ => throw new InvalidOperationException("must not query")));
+        Assert.False(DeliveryPreparation.CanPrepare(
+            Device(""),
+            _ => throw new InvalidOperationException("must not query")));
+
+        string? queriedDeviceId = null;
+        Assert.False(DeliveryPreparation.CanPrepare(
+            Device("selected-device"),
+            deviceId =>
+            {
+                queriedDeviceId = deviceId;
+                return false;
+            }));
+        Assert.Equal("selected-device", queriedDeviceId);
+
+        Assert.True(DeliveryPreparation.CanPrepare(
+            Device("selected-device"),
+            deviceId => deviceId == "selected-device"));
+    }
+
     static SavedDevice Device(string deviceId) => new()
     {
         DeviceId = deviceId,
@@ -114,6 +200,8 @@ public class DeliveryPreparationTests
         public PairStatus PairStatus { get; set; } =
             new("selected-device", true, "builder-controller");
         public Exception? ResetFailure { get; set; }
+        public HashSet<string> CleanupFailures { get; } =
+            new(StringComparer.Ordinal);
         public ControlContext? ResetContext { get; private set; }
         public SavedDevice? CachedDevice { get; private set; }
 
@@ -137,19 +225,35 @@ public class DeliveryPreparationTests
             return Task.FromResult(new DeliveryResetResult(true, PairStatus.DeviceId));
         }
 
-        public void RemoveCredential(string deviceId) =>
+        public void RemoveCredential(string deviceId)
+        {
             Events.Add($"credential:{deviceId}");
+            FailCleanup("credential");
+        }
 
-        public void RemoveSavedDevice(string deviceId) =>
+        public void RemoveSavedDevice(string deviceId)
+        {
             Events.Add($"device:{deviceId}");
+            FailCleanup("device");
+        }
 
-        public void RemoveSignageDeviceId(string deviceId) =>
+        public void RemoveSignageDeviceId(string deviceId)
+        {
             Events.Add($"settings:{deviceId}");
+            FailCleanup("settings");
+        }
 
         public void ClearThumbnails(SavedDevice device)
         {
             Events.Add($"cache:{device.DeviceId}");
             CachedDevice = device;
+            FailCleanup("cache");
+        }
+
+        void FailCleanup(string operation)
+        {
+            if (CleanupFailures.Contains(operation))
+                throw new IOException($"{operation} cleanup failed");
         }
     }
 }

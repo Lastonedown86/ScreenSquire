@@ -35,12 +35,14 @@ async def _delete_wifi_profiles(run: CommandRunner) -> None:
 
     wireless_uuids = []
     for line in out.splitlines():
+        if line == "":
+            continue
         uuid, separator, connection_type = line.partition(":")
-        if (
-            separator
-            and uuid
-            and connection_type.strip() == "802-11-wireless"
-        ):
+        uuid = uuid.strip()
+        connection_type = connection_type.strip()
+        if not separator or not uuid or not connection_type:
+            raise RuntimeError("NetworkManager returned a malformed connection row.")
+        if connection_type == "802-11-wireless":
             wireless_uuids.append(uuid)
 
     for connection_uuid in wireless_uuids:
@@ -66,6 +68,7 @@ async def _delete_wifi_profiles(run: CommandRunner) -> None:
 async def prepare_for_delivery(
     *,
     media_dir: Path,
+    playlist_file: Path,
     name_file: Path,
     dashboard_file: Path,
     state: Any,
@@ -86,6 +89,10 @@ async def prepare_for_delivery(
         else:
             entry.unlink(missing_ok=True)
 
+    _persist_json(
+        playlist_file,
+        empty_playlist.model_dump(mode="json"),
+    )
     state.playlist = empty_playlist
     state.index = 0
     state.override = None
@@ -95,13 +102,12 @@ async def prepare_for_delivery(
         "view_data": {"boards": {}},
         "timer": {"state": "stopped"},
     }
-    set_dashboard(empty_dashboard)
     _persist_json(dashboard_file, empty_dashboard)
+    set_dashboard(empty_dashboard)
 
     name_file.unlink(missing_ok=True)
     set_device_name(socket.gethostname())
 
-    state.save_playlist()
     state.bump()
 
     await _delete_wifi_profiles(run)
