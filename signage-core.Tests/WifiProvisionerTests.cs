@@ -34,7 +34,10 @@ public class WifiProvisionerTests
             var vault = new CredentialVault(path, new ReversibleProtector());
             vault.Put("device-id", Enumerable.Repeat((byte)1, 32).ToArray());
             var r = await p.ConnectAsync(
-                "http://10.55.0.1:8080", "Shop", "secret123", vault, "device-id");
+                "http://10.55.0.1:8080",
+                "Shop",
+                "secret123",
+                Context(vault, "device-id"));
             Assert.True(r.Ok); Assert.True(r.Connected); Assert.Equal("192.168.1.42", r.Ip);
             Assert.Contains("\"ssid\":\"Shop\"", stub.LastBody);
             Assert.Contains("\"password\":\"secret123\"", stub.LastBody);
@@ -79,7 +82,10 @@ public class WifiProvisionerTests
             var provisioner = new WifiProvisioner(new HttpClient(stub));
 
             await provisioner.ConnectAsync(
-                "http://10.55.0.1:8080", "Shop", "secret123", vault, "device-id");
+                "http://10.55.0.1:8080",
+                "Shop",
+                "secret123",
+                Context(vault, "device-id"));
 
             Assert.Equal("http://10.55.0.1:8080/api/wifi", stub.Last!.RequestUri!.AbsoluteUri);
             Assert.Equal(controllerId, Header(stub.Last, "X-PiSignage-Controller"));
@@ -128,5 +134,95 @@ public class WifiProvisionerTests
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             throw new InvalidOperationException("Unreachable");
         }
+    }
+
+    [Fact]
+    public async Task Connect_serializes_counter_allocation_through_response_receipt()
+    {
+        var path = Path.Combine(
+            Path.GetTempPath(),
+            $"wifi-vault-{Guid.NewGuid():N}.dat");
+        var firstEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirst = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var callCount = 0;
+        var handler = new AsyncHandler(async cancellationToken =>
+        {
+            if (Interlocked.Increment(ref callCount) == 1)
+            {
+                firstEntered.SetResult();
+                await releaseFirst.Task.WaitAsync(cancellationToken);
+            }
+            else
+            {
+                secondEntered.SetResult();
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """{"ok":true,"connected":true,"ip":"192.168.1.42"}""",
+                    Encoding.UTF8,
+                    "application/json"),
+            };
+        });
+
+        try
+        {
+            var vault = new CredentialVault(path, new ReversibleProtector());
+            vault.Put("device-id", Enumerable.Repeat((byte)1, 32).ToArray());
+            var provisioner = new WifiProvisioner(new HttpClient(handler));
+            var first = provisioner.ConnectAsync(
+                "http://10.55.0.1:8080",
+                "Shop",
+                "secret123",
+                Context(vault, "device-id"));
+            await firstEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+            var second = provisioner.ConnectAsync(
+                "http://10.55.0.1:8080",
+                "Shop",
+                "secret123",
+                Context(vault, "device-id"));
+
+            var raced = await Task.WhenAny(
+                secondEntered.Task,
+                Task.Delay(TimeSpan.FromMilliseconds(250)));
+            Assert.NotSame(secondEntered.Task, raced);
+            Assert.Equal(2, vault.TryGet("device-id")!.NextCounter);
+
+            releaseFirst.SetResult();
+            await Task.WhenAll(first, second);
+            Assert.Equal(3, vault.TryGet("device-id")!.NextCounter);
+        }
+        finally
+        {
+            releaseFirst.TrySetResult();
+            File.Delete(path);
+        }
+    }
+
+    sealed class AsyncHandler(
+        Func<CancellationToken, Task<HttpResponseMessage>> respond)
+        : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            respond(cancellationToken);
+    }
+
+    static ControlContext Context(CredentialVault vault, string deviceId)
+    {
+        var credential = vault.TryGet(deviceId)
+            ?? throw new InvalidOperationException("Missing test credential.");
+        var controllerId = vault.Load().ControllerId;
+        return new ControlContext(
+            deviceId,
+            controllerId,
+            credential.Secret,
+            () => vault.TakeNextCounter(deviceId));
     }
 }

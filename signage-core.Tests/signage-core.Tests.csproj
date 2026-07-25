@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net8.0-windows</TargetFramework>
     <RootNamespace>signage_core.Tests</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -23,6 +23,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\signage-core\signage-core.csproj" />
+    <ProjectReference Include="..\windows-app\PiSignageControl.csproj" />
   </ItemGroup>
 
 </Project>

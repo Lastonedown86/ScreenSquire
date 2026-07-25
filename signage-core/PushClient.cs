@@ -1,26 +1,61 @@
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Text.Json;
 
 namespace PiSignage.Signage;
 
 public sealed class PushClient(HttpClient http)
 {
-    public async Task<string> UploadMediaAsync(string agentBaseUrl, string filename, byte[] png)
+    static readonly JsonSerializerOptions JsonOptions =
+        new(JsonSerializerDefaults.Web);
+
+    public async Task<string> UploadMediaAsync(
+        string agentBaseUrl,
+        string filename,
+        byte[] png,
+        ControlContext context)
     {
         using var form = new MultipartFormDataContent();
         var file = new ByteArrayContent(png);
         file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
         form.Add(file, "file", filename);
-        var resp = await http.PostAsync(agentBaseUrl.TrimEnd('/') + "/api/media", form);
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            agentBaseUrl.TrimEnd('/') + "/api/media?name=" +
+            Uri.EscapeDataString(filename))
+        {
+            Content = form,
+        };
+        using var resp = await SignedControlRequest.SendAsync(
+            http,
+            request,
+            context,
+            png);
         resp.EnsureSuccessStatusCode();
         var body = await resp.Content.ReadFromJsonAsync<UploadResult>()
                    ?? throw new InvalidOperationException("Empty upload response");
         return "/media/" + body.name;
     }
 
-    public async Task PostDashboardAsync(string agentBaseUrl, object payload)
+    public async Task PostDashboardAsync(
+        string agentBaseUrl,
+        object payload,
+        ControlContext context)
     {
-        var resp = await http.PostAsJsonAsync(agentBaseUrl.TrimEnd('/') + "/api/dashboard", payload);
+        var body = JsonSerializer.SerializeToUtf8Bytes(payload, JsonOptions);
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            agentBaseUrl.TrimEnd('/') + "/api/dashboard")
+        {
+            Content = new ByteArrayContent(body),
+        };
+        request.Content.Headers.ContentType =
+            new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+        using var resp = await SignedControlRequest.SendAsync(
+            http,
+            request,
+            context,
+            body);
         resp.EnsureSuccessStatusCode();
     }
 

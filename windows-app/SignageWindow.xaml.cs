@@ -14,6 +14,7 @@ public partial class SignageWindow : Window
     readonly DashboardState _state = new();
     readonly RoundTimer _timer = new();
     readonly PushClient _client = new(new HttpClient { Timeout = TimeSpan.FromSeconds(10) });
+    readonly CredentialVault _credentialVault = new(new DpapiSecretProtector());
     (int x, int y, int w, int h)? _lastRegion;
     DateTime? _endsAtLocal;                 // app-side countdown target (mirrors the TV)
     readonly DispatcherTimer _clockTick;
@@ -24,14 +25,17 @@ public partial class SignageWindow : Window
     sealed class TvChoice
     {
         public PiSignage.Signage.SavedDevice Device { get; init; } = null!;
+        public ControlContext? ControlContext { get; init; }
         public bool Checked { get; set; }
     }
     List<TvChoice> _tvs = new();
 
-    IEnumerable<PushTarget> Targets => _tvs.Where(t => t.Checked)
+    IEnumerable<PushTarget> Targets => _tvs
+        .Where(t => t.Checked && t.ControlContext is not null)
         .Select(t => new PushTarget(
             t.Device.Name,
-            $"http://{t.Device.Ip}:{t.Device.Port}"));
+            $"http://{t.Device.Ip}:{t.Device.Port}",
+            t.ControlContext!));
 
     public SignageWindow()
     {
@@ -69,6 +73,7 @@ public partial class SignageWindow : Window
         var saved = new PiSignage.Signage.DeviceStore().Load();
         _tvs = saved.Select(d => new TvChoice {
             Device = d,
+            ControlContext = TryControlContext(d.DeviceId),
             Checked = !string.IsNullOrWhiteSpace(d.DeviceId)
                 ? keepIds.Contains(d.DeviceId)
                 : keepLegacyHosts.Contains(d.Hostname),
@@ -98,6 +103,7 @@ public partial class SignageWindow : Window
         }
         _tvs = saved.Select(d => new TvChoice {
             Device = d,
+            ControlContext = TryControlContext(d.DeviceId),
             Checked = wantedIds.Count > 0
                 ? !string.IsNullOrWhiteSpace(d.DeviceId) &&
                   wantedIds.Contains(d.DeviceId)
@@ -410,9 +416,16 @@ public partial class SignageWindow : Window
             Status.Text = $"Sending {display} to your TVs…";
             var result = await MultiPush.RunAsync(Targets, async t =>
             {
-                var path = await _client.UploadMediaAsync(t.BaseUrl, name, png);
+                var path = await _client.UploadMediaAsync(
+                    t.BaseUrl,
+                    name,
+                    png,
+                    t.ControlContext);
                 _state.Boards[slot] = path;
-                await _client.PostDashboardAsync(t.BaseUrl, DashboardPayload.Build(_state, _timer));
+                await _client.PostDashboardAsync(
+                    t.BaseUrl,
+                    DashboardPayload.Build(_state, _timer),
+                    t.ControlContext);
             });
             Status.Text = result.Summary();
             Toaster.Show(result.Summary(),
@@ -431,7 +444,10 @@ public partial class SignageWindow : Window
     // whatever boards it already has instead of the sender re-advertising its own.
     async Task<MultiPushResult> FanOutDashboard()
         => await MultiPush.RunAsync(Targets, t =>
-               _client.PostDashboardAsync(t.BaseUrl, DashboardPayload.BuildTimerOnly(_timer)));
+               _client.PostDashboardAsync(
+                   t.BaseUrl,
+                   DashboardPayload.BuildTimerOnly(_timer),
+                   t.ControlContext));
 
     async Task<bool> Post(string msg)
     {
@@ -580,7 +596,14 @@ public partial class SignageWindow : Window
         {
             var u = new Uri(t.BaseUrl);
             using var api = new ApiClient(u.Host, u.Port);
-            await api.ShowNowAsync(new ShowNowRequest { Type = "url", Source = BoardPageUrl(slot), Duration = null });
+            await api.ShowNowAsync(
+                new ShowNowRequest
+                {
+                    Type = "url",
+                    Source = BoardPageUrl(slot),
+                    Duration = null,
+                },
+                t.ControlContext);
         });
         Toaster.Show(result.AllFailed
             ? "Couldn't pin it on any TV: " + result.Summary(verb: "pinned")
@@ -594,7 +617,7 @@ public partial class SignageWindow : Window
         {
             var u = new Uri(t.BaseUrl);
             using var api = new ApiClient(u.Host, u.Port);
-            await api.ClearShowNowAsync();
+            await api.ClearShowNowAsync(t.ControlContext);
         });
         Toaster.Show(result.AllFailed
             ? "Couldn't switch any TV back: " + result.Summary(verb: "switched back")
@@ -604,4 +627,19 @@ public partial class SignageWindow : Window
 
     // The kiosk browser runs ON the Pi, so it reaches its own agent via localhost.
     static string BoardPageUrl(string slot) => $"http://localhost:8080/dashboard?view=board&name={slot}";
+
+    ControlContext? TryControlContext(string deviceId)
+    {
+        if (string.IsNullOrWhiteSpace(deviceId))
+            return null;
+        var credential = _credentialVault.TryGet(deviceId);
+        if (credential is null)
+            return null;
+        var stableDeviceId = deviceId;
+        return new ControlContext(
+            stableDeviceId,
+            _credentialVault.Load().ControllerId,
+            credential.Secret,
+            () => _credentialVault.TakeNextCounter(stableDeviceId));
+    }
 }

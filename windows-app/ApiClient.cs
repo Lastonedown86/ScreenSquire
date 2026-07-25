@@ -1,7 +1,6 @@
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Json;
-using System.Security.Cryptography;
 using System.Text.Json;
 using PiSignage.Signage;
 
@@ -19,9 +18,19 @@ public class ApiClient : IDisposable
     };
 
     public ApiClient(string host, int port)
+        : this(host, port, new HttpClientHandler())
     {
+    }
+
+    public ApiClient(string host, int port, HttpMessageHandler handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
         BaseUrl = $"http://{host.Trim()}:{port}";
-        _http = new HttpClient { BaseAddress = new Uri(BaseUrl), Timeout = TimeSpan.FromSeconds(8) };
+        _http = new HttpClient(handler)
+        {
+            BaseAddress = new Uri(BaseUrl),
+            Timeout = TimeSpan.FromSeconds(8),
+        };
     }
 
     public Task<StatusInfo?> GetStatusAsync() =>
@@ -30,9 +39,16 @@ public class ApiClient : IDisposable
     public Task<Playlist?> GetPlaylistAsync() =>
         _http.GetFromJsonAsync<Playlist>("/api/playlist");
 
-    public async Task PutPlaylistAsync(Playlist playlist)
+    public async Task PutPlaylistAsync(
+        Playlist playlist,
+        ControlContext context)
     {
-        var resp = await _http.PutAsJsonAsync("/api/playlist", playlist, JsonOpts);
+        var body = JsonSerializer.SerializeToUtf8Bytes(playlist, JsonOpts);
+        using var resp = await SendJsonAsync(
+            HttpMethod.Put,
+            "/api/playlist",
+            body,
+            context);
         await ThrowIfError(resp);
     }
 
@@ -42,37 +58,68 @@ public class ApiClient : IDisposable
         return r?.Files ?? new List<MediaFile>();
     }
 
-    public async Task<MediaFile?> UploadMediaAsync(string filePath)
+    public async Task<MediaFile?> UploadMediaAsync(
+        string filePath,
+        ControlContext context)
     {
-        using var form = new MultipartFormDataContent();
-        await using var fs = File.OpenRead(filePath);
-        var content = new StreamContent(fs);
-        form.Add(content, "file", Path.GetFileName(filePath));
-        // uploads of big videos can take a while
+        // Read once so the signed source bytes are exactly the bytes transmitted.
         using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(10));
-        var resp = await _http.PostAsync("/api/media", form, cts.Token);
+        var source = await File.ReadAllBytesAsync(filePath, cts.Token);
+        using var form = new MultipartFormDataContent();
+        var content = new ByteArrayContent(source);
+        form.Add(content, "file", Path.GetFileName(filePath));
+        using var request = Request(
+            HttpMethod.Post,
+            "/api/media?name=" +
+            Uri.EscapeDataString(Path.GetFileName(filePath)));
+        request.Content = form;
+        using var resp = await SignedControlRequest.SendAsync(
+            _http,
+            request,
+            context,
+            source,
+            cts.Token);
         await ThrowIfError(resp);
         return await resp.Content.ReadFromJsonAsync<MediaFile>();
     }
 
-    public async Task DeleteMediaAsync(string name)
+    public async Task DeleteMediaAsync(
+        string name,
+        ControlContext context)
     {
-        var resp = await _http.DeleteAsync($"/api/media/{Uri.EscapeDataString(name)}");
+        using var resp = await SendEmptyAsync(
+            HttpMethod.Delete,
+            $"/api/media/{Uri.EscapeDataString(name)}",
+            context);
         await ThrowIfError(resp);
     }
 
     /// <summary>Takes a file off the playlist and any dashboard board so it can be deleted or replaced.</summary>
-    public async Task DetachMediaAsync(string name)
+    public async Task DetachMediaAsync(
+        string name,
+        ControlContext context)
     {
-        var resp = await _http.PostAsync($"/api/media/{Uri.EscapeDataString(name)}/detach", null);
+        using var resp = await SendEmptyAsync(
+            HttpMethod.Post,
+            $"/api/media/{Uri.EscapeDataString(name)}/detach",
+            context);
         await ThrowIfError(resp);
     }
 
     /// <summary>Renames a media file; the Pi rewrites playlist/dashboard references. Returns the new full filename.</summary>
-    public async Task<string> RenameMediaAsync(string name, string newBaseName)
+    public async Task<string> RenameMediaAsync(
+        string name,
+        string newBaseName,
+        ControlContext context)
     {
-        var resp = await _http.PostAsJsonAsync(
-            $"/api/media/{Uri.EscapeDataString(name)}/rename", new { new_name = newBaseName });
+        var body = JsonSerializer.SerializeToUtf8Bytes(
+            new { new_name = newBaseName },
+            JsonOpts);
+        using var resp = await SendJsonAsync(
+            HttpMethod.Post,
+            $"/api/media/{Uri.EscapeDataString(name)}/rename",
+            body,
+            context);
         await ThrowIfError(resp);
         var r = await resp.Content.ReadFromJsonAsync<RenameResult>();
         return r?.Name ?? name;
@@ -83,61 +130,105 @@ public class ApiClient : IDisposable
         [System.Text.Json.Serialization.JsonPropertyName("name")] public string? Name { get; set; }
     }
 
-    public async Task ShowNowAsync(ShowNowRequest req)
+    public async Task ShowNowAsync(
+        ShowNowRequest req,
+        ControlContext context)
     {
-        var resp = await _http.PostAsJsonAsync("/api/show-now", req, JsonOpts);
+        var body = JsonSerializer.SerializeToUtf8Bytes(req, JsonOpts);
+        using var resp = await SendJsonAsync(
+            HttpMethod.Post,
+            "/api/show-now",
+            body,
+            context);
         await ThrowIfError(resp);
     }
 
-    public async Task ClearShowNowAsync()
+    public async Task ClearShowNowAsync(ControlContext context)
     {
-        var resp = await _http.DeleteAsync("/api/show-now");
+        using var resp = await SendEmptyAsync(
+            HttpMethod.Delete,
+            "/api/show-now",
+            context);
         await ThrowIfError(resp);
     }
 
-    public async Task NextAsync()
+    public async Task NextAsync(ControlContext context)
     {
-        var resp = await _http.PostAsync("/api/next", null);
+        using var resp = await SendEmptyAsync(
+            HttpMethod.Post,
+            "/api/next",
+            context);
         await ThrowIfError(resp);
     }
 
     public async Task SetNameAsync(
         string name,
-        CredentialVault vault,
-        string deviceId)
+        ControlContext context)
     {
-        ArgumentNullException.ThrowIfNull(vault);
-        var credential = vault.TryGet(deviceId)
-            ?? throw new KeyNotFoundException(
-                $"No controller credential exists for device '{deviceId}'.");
         var body = JsonSerializer.SerializeToUtf8Bytes(new { name }, JsonOpts);
-        using var request = new HttpRequestMessage(
+        using var resp = await SendJsonAsync(
             HttpMethod.Post,
-            new Uri(BaseUrl.TrimEnd('/') + "/api/name", UriKind.Absolute))
-        {
-            Content = new ByteArrayContent(body),
-        };
-        request.Content.Headers.ContentType =
-            new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
-        ControlRequestSigner.Sign(
-            request,
-            vault.Load().ControllerId,
-            credential.Secret,
-            vault.TakeNextCounter(deviceId),
-            Convert.ToHexString(SHA256.HashData(body)).ToLowerInvariant());
-        using var resp = await _http.SendAsync(request);
+            "/api/name",
+            body,
+            context);
         await ThrowIfError(resp);
     }
 
     public Task<KioskState?> GetKioskAsync() => _http.GetFromJsonAsync<KioskState>("/api/kiosk");
 
-    public async Task<bool> SetKioskAsync(bool running)
+    public async Task<bool> SetKioskAsync(
+        bool running,
+        ControlContext context)
     {
-        var resp = await _http.PostAsJsonAsync("/api/kiosk", new { running });
+        var body = JsonSerializer.SerializeToUtf8Bytes(new { running }, JsonOpts);
+        using var resp = await SendJsonAsync(
+            HttpMethod.Post,
+            "/api/kiosk",
+            body,
+            context);
         await ThrowIfError(resp);
         var r = await resp.Content.ReadFromJsonAsync<KioskResult>();
         return r?.Ok ?? false;
     }
+
+    async Task<HttpResponseMessage> SendJsonAsync(
+        HttpMethod method,
+        string pathAndQuery,
+        byte[] body,
+        ControlContext context,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = Request(method, pathAndQuery);
+        request.Content = new ByteArrayContent(body);
+        request.Content.Headers.ContentType =
+            new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+        return await SignedControlRequest.SendAsync(
+            _http,
+            request,
+            context,
+            body,
+            cancellationToken);
+    }
+
+    async Task<HttpResponseMessage> SendEmptyAsync(
+        HttpMethod method,
+        string pathAndQuery,
+        ControlContext context,
+        CancellationToken cancellationToken = default)
+    {
+        using var request = Request(method, pathAndQuery);
+        return await SignedControlRequest.SendAsync(
+            _http,
+            request,
+            context,
+            Array.Empty<byte>(),
+            cancellationToken);
+    }
+
+    HttpRequestMessage Request(HttpMethod method, string pathAndQuery) =>
+        new(
+            method,
+            new Uri(BaseUrl.TrimEnd('/') + pathAndQuery, UriKind.Absolute));
 
     private static async Task ThrowIfError(HttpResponseMessage resp)
     {

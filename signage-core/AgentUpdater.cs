@@ -28,11 +28,23 @@ public static class AgentUpdater
     }
 
     public static async Task PushAsync(HttpClient http, string baseUrl, byte[] zip,
-        string expectedVersion, TimeSpan? timeout = null, TimeSpan? pollDelay = null,
+        string expectedVersion, ControlContext context,
+        TimeSpan? timeout = null, TimeSpan? pollDelay = null,
         CancellationToken ct = default)
     {
         using var form = new MultipartFormDataContent { { new ByteArrayContent(zip), "file", "agent-update.zip" } };
-        using var resp = await http.PostAsync($"{baseUrl}/api/update", form, ct);
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"{baseUrl.TrimEnd('/')}/api/update")
+        {
+            Content = form,
+        };
+        using var resp = await SignedControlRequest.SendAsync(
+            http,
+            request,
+            context,
+            zip,
+            ct);
         resp.EnsureSuccessStatusCode();
 
         // the agent restarts itself now; poll until it's back on the new version

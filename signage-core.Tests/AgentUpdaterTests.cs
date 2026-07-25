@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using PiSignage.Signage;
 
@@ -41,12 +42,14 @@ public class AgentUpdaterTests
         public Func<HttpRequestMessage, HttpResponseMessage> Respond = _ => new(HttpStatusCode.OK);
         public System.Net.Http.Headers.ContentDispositionHeaderValue? CapturedContentDisposition;
         public byte[]? CapturedFileBytes;
+        public HttpRequestMessage? UpdateRequest;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
         {
             Requests.Add($"{req.Method} {req.RequestUri!.PathAndQuery}");
             // read the multipart content now, before responding — the caller disposes it later
             if (req.Content is MultipartFormDataContent multipart)
             {
+                UpdateRequest = req;
                 var part = multipart.First();
                 CapturedContentDisposition = part.Headers.ContentDisposition;
                 CapturedFileBytes = await part.ReadAsByteArrayAsync(ct);
@@ -71,12 +74,23 @@ public class AgentUpdaterTests
                     : Json("{\"agent_version\": \"2\"}"));
         using var http = new HttpClient(handler);
         var zipBytes = new byte[] { 1, 2, 3 };
-        await AgentUpdater.PushAsync(http, "http://pi:8080", zipBytes, "2",
+        await AgentUpdater.PushAsync(http, "http://pi:8080", zipBytes, "2", Context(),
             timeout: TimeSpan.FromSeconds(30), pollDelay: TimeSpan.Zero);
         Assert.Equal("POST /api/update", handler.Requests[0]);
         Assert.True(statusCalls >= 3);
         Assert.Equal("file", handler.CapturedContentDisposition?.Name?.Trim('"'));
         Assert.Equal(zipBytes, handler.CapturedFileBytes);
+        Assert.Equal(
+            "test-controller",
+            Header(handler.UpdateRequest!, "X-PiSignage-Controller"));
+        Assert.True(long.Parse(
+            Header(handler.UpdateRequest!, "X-PiSignage-Counter")) > 0);
+        Assert.Equal(
+            Sha256Hex(zipBytes),
+            Header(handler.UpdateRequest!, "X-PiSignage-Entity-SHA256"));
+        Assert.Equal(
+            64,
+            Header(handler.UpdateRequest!, "X-PiSignage-Signature").Length);
     }
 
     [Fact]
@@ -85,7 +99,12 @@ public class AgentUpdaterTests
         var handler = new FakeHandler { Respond = _ => new(HttpStatusCode.NotFound) };
         using var http = new HttpClient(handler);
         await Assert.ThrowsAsync<HttpRequestException>(() =>
-            AgentUpdater.PushAsync(http, "http://pi:8080", new byte[] { 1 }, "2"));
+            AgentUpdater.PushAsync(
+                http,
+                "http://pi:8080",
+                new byte[] { 1 },
+                "2",
+                Context()));
     }
 
     [Fact]
@@ -98,7 +117,28 @@ public class AgentUpdaterTests
                 : Json("{\"agent_version\": \"1\"}");  // never updates
         using var http = new HttpClient(handler);
         await Assert.ThrowsAsync<TimeoutException>(() =>
-            AgentUpdater.PushAsync(http, "http://pi:8080", new byte[] { 1 }, "2",
+            AgentUpdater.PushAsync(
+                http,
+                "http://pi:8080",
+                new byte[] { 1 },
+                "2",
+                Context(),
                 timeout: TimeSpan.FromMilliseconds(50), pollDelay: TimeSpan.Zero));
+    }
+
+    static string Header(HttpRequestMessage request, string name) =>
+        request.Headers.GetValues(name).Single();
+
+    static string Sha256Hex(byte[] bytes) =>
+        Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+
+    static ControlContext Context()
+    {
+        long counter = 0;
+        return new ControlContext(
+            "device-id",
+            "test-controller",
+            Enumerable.Repeat((byte)1, 32).ToArray(),
+            () => Interlocked.Increment(ref counter));
     }
 }

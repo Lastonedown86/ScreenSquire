@@ -4,7 +4,18 @@ using Xunit;
 
 public class MultiPushTests
 {
-    static PushTarget T(string name) => new(name, "http://" + name + ":8080");
+    static PushTarget T(string name) =>
+        new(name, "http://" + name + ":8080", Context(name));
+
+    static ControlContext Context(string deviceId)
+    {
+        long counter = 0;
+        return new ControlContext(
+            deviceId,
+            "test-controller",
+            Enumerable.Repeat((byte)1, 32).ToArray(),
+            () => Interlocked.Increment(ref counter));
+    }
 
     [Fact]
     public async Task AllSucceed()
