@@ -137,7 +137,7 @@ Set exact tested versions:
 
 ```text
 # requirements.txt
-fastapi==0.139.2
+fastapi==0.140.0
 uvicorn[standard]==0.51.0
 python-multipart==0.0.32
 zeroconf==0.150.0
