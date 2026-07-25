@@ -23,12 +23,20 @@ public sealed class WifiStatus
 
 public sealed class WifiProvisioner(HttpClient http)
 {
-    public async Task<bool> DetectAsync(string baseUrl)
+    public async Task<bool> DetectAsync(
+        string baseUrl,
+        CancellationToken cancellationToken = default)
     {
         try
         {
-            var r = await http.GetAsync(baseUrl.TrimEnd('/') + "/api/status");
+            using var r = await http.GetAsync(
+                baseUrl.TrimEnd('/') + "/api/status",
+                cancellationToken);
             return r.IsSuccessStatusCode;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch { return false; }
     }
@@ -38,7 +46,8 @@ public sealed class WifiProvisioner(HttpClient http)
         string ssid,
         string password,
         CredentialVault vault,
-        string deviceId)
+        string deviceId,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(vault);
         var credential = vault.TryGet(deviceId)
@@ -57,11 +66,16 @@ public sealed class WifiProvisioner(HttpClient http)
         var entityHash = Convert.ToHexString(SHA256.HashData(body)).ToLowerInvariant();
         ControlRequestSigner.Sign(
             request, controllerId, credential.Secret, counter, entityHash);
-        using var resp = await http.SendAsync(request);
+        using var resp = await http.SendAsync(request, cancellationToken);
         resp.EnsureSuccessStatusCode();
-        return await resp.Content.ReadFromJsonAsync<WifiResult>() ?? new WifiResult();
+        return await resp.Content.ReadFromJsonAsync<WifiResult>(
+            cancellationToken: cancellationToken) ?? new WifiResult();
     }
 
-    public async Task<WifiStatus> GetStatusAsync(string baseUrl)
-        => await http.GetFromJsonAsync<WifiStatus>(baseUrl.TrimEnd('/') + "/api/wifi/status") ?? new WifiStatus();
+    public async Task<WifiStatus> GetStatusAsync(
+        string baseUrl,
+        CancellationToken cancellationToken = default)
+        => await http.GetFromJsonAsync<WifiStatus>(
+            baseUrl.TrimEnd('/') + "/api/wifi/status",
+            cancellationToken) ?? new WifiStatus();
 }

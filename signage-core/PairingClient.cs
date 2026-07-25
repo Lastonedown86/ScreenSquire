@@ -47,7 +47,16 @@ public sealed class PairingClient(HttpClient http)
             ?? throw new InvalidDataException("The Pi returned an empty pairing status.");
         if (string.IsNullOrWhiteSpace(result.DeviceId))
             throw new InvalidDataException("The Pi returned an invalid device identity.");
-        return new PairStatus(result.DeviceId, result.Paired, result.ControllerId);
+        if (result.Paired is null)
+            throw new InvalidDataException("The Pi did not report its pairing state.");
+        if (result.Paired.Value && string.IsNullOrWhiteSpace(result.ControllerId))
+            throw new InvalidDataException("The paired Pi did not report its controller identity.");
+        if (!result.Paired.Value && !string.IsNullOrEmpty(result.ControllerId))
+            throw new InvalidDataException("The unpaired Pi reported a controller identity.");
+        return new PairStatus(
+            result.DeviceId,
+            result.Paired.Value,
+            result.ControllerId);
     }
 
     static Uri Endpoint(string baseUrl, string path)
@@ -66,7 +75,7 @@ public sealed class PairingClient(HttpClient http)
     sealed class PairStatusResponse
     {
         [JsonPropertyName("device_id")] public string DeviceId { get; set; } = "";
-        [JsonPropertyName("paired")] public bool Paired { get; set; }
+        [JsonPropertyName("paired")] public bool? Paired { get; set; }
         [JsonPropertyName("controller_id")] public string? ControllerId { get; set; }
     }
 }

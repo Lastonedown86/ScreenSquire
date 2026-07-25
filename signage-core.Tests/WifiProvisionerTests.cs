@@ -96,6 +96,20 @@ public class WifiProvisionerTests
         }
     }
 
+    [Fact]
+    public async Task Detect_honors_cancellation_instead_of_reporting_offline()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var provisioner = new WifiProvisioner(
+            new HttpClient(new CancellationHandler()));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            provisioner.DetectAsync(
+                "http://10.55.0.1:8080",
+                cancellation.Token));
+    }
+
     static string Header(HttpRequestMessage request, string name) =>
         request.Headers.GetValues(name).Single();
 
@@ -103,5 +117,16 @@ public class WifiProvisionerTests
     {
         public byte[] Protect(byte[] plaintext) => plaintext.Reverse().ToArray();
         public byte[] Unprotect(byte[] ciphertext) => ciphertext.Reverse().ToArray();
+    }
+
+    sealed class CancellationHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("Unreachable");
+        }
     }
 }

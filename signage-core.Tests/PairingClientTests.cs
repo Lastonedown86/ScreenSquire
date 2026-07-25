@@ -52,6 +52,33 @@ public class PairingClientTests
         Assert.Equal("other-controller-id", result.ControllerId);
     }
 
+    [Theory]
+    [InlineData("""{"device_id":"device-id","controller_id":null}""")]
+    [InlineData("""{"device_id":"device-id","paired":true,"controller_id":null}""")]
+    [InlineData("""{"device_id":"device-id","paired":false,"controller_id":"controller-id"}""")]
+    public async Task Status_rejects_missing_or_contradictory_pairing_state(string json)
+    {
+        var client = new PairingClient(new HttpClient(new StubHandler(_ => json)));
+
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            client.GetStatusAsync("http://10.55.0.1:8080"));
+    }
+
+    [Fact]
+    public async Task Pair_honors_cancellation()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var client = new PairingClient(new HttpClient(new CancellationHandler()));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            client.PairAsync(
+                "http://10.55.0.1:8080",
+                "12345678",
+                ControllerId,
+                cancellation.Token));
+    }
+
     sealed class StubHandler(Func<HttpRequestMessage, string> response) : HttpMessageHandler
     {
         public HttpRequestMessage? Last { get; private set; }
@@ -69,6 +96,17 @@ public class PairingClientTests
             {
                 Content = new StringContent(response(request), Encoding.UTF8, "application/json"),
             };
+        }
+    }
+
+    sealed class CancellationHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("Unreachable");
         }
     }
 }

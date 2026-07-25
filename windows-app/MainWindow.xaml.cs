@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Windows;
@@ -73,7 +74,10 @@ public partial class MainWindow : Window
             try
             {
                 using var probe = new ApiClient(d.Ip, d.Port);
-                d.Online = await probe.GetStatusAsync() != null;
+                var status = await probe.GetStatusAsync();
+                d.Online = status is not null &&
+                    PiSignage.Signage.DeviceIdentityPolicy.IsMatch(
+                        d, status.DeviceId);
             }
             catch { d.Online = false; }
         }));
@@ -117,7 +121,7 @@ public partial class MainWindow : Window
     {
         var endpointHost = dev.Ip;
         var endpointPort = dev.Port;
-        var status = await ConnectHostAsync(endpointHost, endpointPort);
+        var status = await ConnectHostAsync(endpointHost, endpointPort, dev);
         if (status == null)
         {
             LblStatus.Text = $"{dev.Name} not at {dev.Ip} — searching…";
@@ -126,17 +130,17 @@ public partial class MainWindow : Window
             {
                 endpointHost = discovered.Address;
                 endpointPort = discovered.Port;
-                status = await ConnectHostAsync(endpointHost, endpointPort);
+                status = await ConnectHostAsync(endpointHost, endpointPort, dev);
             }
         }
         if (status != null)
         {
-            dev.Ip = endpointHost;
-            dev.Port = endpointPort;
-            if (!string.IsNullOrWhiteSpace(status.DeviceId))
-                dev.DeviceId = status.DeviceId;
-            if (!string.IsNullOrWhiteSpace(status.Name))
-                dev.Hostname = status.Name;
+            PiSignage.Signage.DeviceIdentityPolicy.ApplyVerifiedEndpoint(
+                dev,
+                status.DeviceId,
+                status.Name,
+                endpointHost,
+                endpointPort);
             SaveDevices();
         }
         if (status == null)
@@ -144,7 +148,10 @@ public partial class MainWindow : Window
     }
 
     // Core connect: returns StatusInfo on success (and wires up the UI), else null.
-    private async Task<StatusInfo?> ConnectHostAsync(string host, int port)
+    private async Task<StatusInfo?> ConnectHostAsync(
+        string host,
+        int port,
+        PiSignage.Signage.SavedDevice expected)
     {
         BtnConnect.IsEnabled = false;
         LblStatus.Text = $"Connecting to {host}…";
@@ -153,6 +160,12 @@ public partial class MainWindow : Window
             _api?.Dispose();
             _api = new ApiClient(host, port);
             var status = await _api.GetStatusAsync() ?? throw new HttpRequestException("Empty response");
+            if (!PiSignage.Signage.DeviceIdentityPolicy.IsMatch(
+                    expected, status.DeviceId))
+            {
+                throw new InvalidDataException(
+                    "The endpoint reported a different device identity.");
+            }
             LblStatus.Text = $"Connected to {DisplayName(status)}";
             MainArea.IsEnabled = true;
             GettingStarted.Visibility = Visibility.Collapsed;

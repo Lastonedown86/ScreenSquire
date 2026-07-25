@@ -14,6 +14,10 @@ public partial class WifiSetupWindow : Window
     readonly WifiProvisioner _wifi;
     readonly PairingClient _pairing;
     readonly CredentialVault _vault = new(new DpapiSecretProtector());
+    readonly CancellationTokenSource _lifetime = new();
+    PairStatus? _cachedPairStatus;
+    string _controllerId = "";
+    bool _cachedHasCredential;
     bool _detected;
     bool _cancelDetect;
 
@@ -30,7 +34,13 @@ public partial class WifiSetupWindow : Window
         // editable ComboBox has no TextChanged attribute — hook the routed event
         CmbSsid.AddHandler(System.Windows.Controls.Primitives.TextBoxBase.TextChangedEvent,
             new System.Windows.Controls.TextChangedEventHandler((s, e) => Field_Changed(s, e)));
-        Loaded += async (_, _) => await DetectLoop();
+        Closing += (_, _) => _lifetime.Cancel();
+        Loaded += async (_, _) =>
+        {
+            try { await DetectLoop(_lifetime.Token); }
+            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+            catch (Exception ex) { ShowDetectionFailure(ex); }
+        };
     }
 
     void Window_PreviewKeyDown(object s, System.Windows.Input.KeyEventArgs e)
@@ -44,27 +54,30 @@ public partial class WifiSetupWindow : Window
         head.Foreground = (Brush)FindResource("Success");
     }
 
-    async Task DetectLoop()
+    async Task DetectLoop(CancellationToken cancellationToken)
     {
         _cancelDetect = false;
         for (int i = 0; i < 60 && !_detected && !_cancelDetect; i++)   // ~60s of polling
         {
-            if (await _wifi.DetectAsync(PiUsbBase))
+            if (await _wifi.DetectAsync(PiUsbBase, cancellationToken))
             {
+                await RefreshPairingStateAsync(cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
                 _detected = true;
                 Detecting.Visibility = Visibility.Collapsed;
                 BtnCancelDetect.Visibility = Visibility.Collapsed;
                 DetectStatus.Text = "Pi found over USB.";
                 MarkDone(Step1Head);
                 Form.IsEnabled = true;
-                await LoadNearbyNetworks();
+                await LoadNearbyNetworks(cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
                 CmbSsid.Focus();
                 return;
             }
             DetectStatus.Text = i >= 15
                 ? $"Still looking ({i}s)… make sure the cable is in the Pi's USB-C port and is a data cable (not charge-only)."
                 : $"Looking for the Pi over USB… ({i}s)";
-            await Task.Delay(1000);
+            await Task.Delay(1000, cancellationToken);
         }
         if (_detected || _cancelDetect) return;
         DetectStatus.Text = "No Pi found. Check the cable is a DATA USB-C cable and the Pi has booted, then click Retry.";
@@ -88,13 +101,26 @@ public partial class WifiSetupWindow : Window
         Detecting.Visibility = Visibility.Visible;
         BtnCancelDetect.Visibility = Visibility.Visible;
         DetectStatus.Text = "Looking for the Pi over USB…";
-        await DetectLoop();
+        try { await DetectLoop(_lifetime.Token); }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        catch (Exception ex) { ShowDetectionFailure(ex); }
+    }
+
+    void ShowDetectionFailure(Exception ex)
+    {
+        if (_lifetime.IsCancellationRequested) return;
+        _detected = false;
+        DetectStatus.Text = "The Pi was found, but setup status could not be read: " +
+            ex.Message;
+        Detecting.Visibility = Visibility.Collapsed;
+        BtnCancelDetect.Visibility = Visibility.Collapsed;
+        BtnRetry.Visibility = Visibility.Visible;
     }
 
     // Pre-fill the SSID picker from Windows' visible networks so the client can
     // pick by name instead of typing it exactly. Best-effort: failure -> empty
     // list, typing still works.
-    async Task LoadNearbyNetworks()
+    async Task LoadNearbyNetworks(CancellationToken cancellationToken)
     {
         try
         {
@@ -105,8 +131,9 @@ public partial class WifiSetupWindow : Window
                 CreateNoWindow = true,
             };
             using var p = System.Diagnostics.Process.Start(psi)!;
-            var output = await p.StandardOutput.ReadToEndAsync();
-            await p.WaitForExitAsync();
+            var output = await p.StandardOutput.ReadToEndAsync(cancellationToken);
+            await p.WaitForExitAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
 
             // lines look like "SSID 1 : MyNetwork" (label is locale-dependent,
             // but the "SSID <n> :" shape holds on common locales; parse defensively)
@@ -118,6 +145,10 @@ public partial class WifiSetupWindow : Window
                 .Distinct()
                 .ToList();
             CmbSsid.ItemsSource = ssids;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch { /* no list — the user can still type the name */ }
     }
@@ -144,11 +175,34 @@ public partial class WifiSetupWindow : Window
     }
 
     void Field_Changed(object s, RoutedEventArgs e)
-        => BtnConnect.IsEnabled =
-            TxtRecoveryPin.Password.Length == 8 &&
-            TxtRecoveryPin.Password.All(char.IsDigit) &&
-            Ssid.Length > 0 &&
-            EffectivePassword.Length > 0;
+        => BtnConnect.IsEnabled = OnboardingPolicy.CanSubmit(
+            Ssid,
+            EffectivePassword,
+            TxtRecoveryPin.Password,
+            _cachedPairStatus,
+            _controllerId,
+            _cachedHasCredential);
+
+    async Task RefreshPairingStateAsync(CancellationToken cancellationToken)
+    {
+        var status = await _pairing.GetStatusAsync(
+            PiUsbBase,
+            cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        var controllerId = _vault.Load().ControllerId;
+        var hasCredential =
+            status.Paired &&
+            string.Equals(
+                status.ControllerId,
+                controllerId,
+                StringComparison.Ordinal) &&
+            _vault.TryGet(status.DeviceId) is not null;
+        cancellationToken.ThrowIfCancellationRequested();
+        _cachedPairStatus = status;
+        _controllerId = controllerId;
+        _cachedHasCredential = hasCredential;
+        Field_Changed(this, new RoutedEventArgs());
+    }
 
     async void Connect_Click(object s, RoutedEventArgs e)
     {
@@ -156,16 +210,29 @@ public partial class WifiSetupWindow : Window
         Working.Visibility = Visibility.Visible;
         Result.Foreground = (Brush)FindResource("TextMuted");
         Result.Text = $"Sending your WiFi details to the Pi…";
+        var cancellationToken = _lifetime.Token;
         try
         {
-            var vaultData = _vault.Load();
-            var controllerId = vaultData.ControllerId;
-            var pairStatus = await _pairing.GetStatusAsync(PiUsbBase);
-            if (pairStatus.Paired &&
-                !string.Equals(
-                    pairStatus.ControllerId,
+            await RefreshPairingStateAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            var pairStatus = _cachedPairStatus
+                ?? throw new InvalidDataException("The Pi returned no pairing status.");
+            var controllerId = _controllerId;
+            if (!OnboardingPolicy.CanSubmit(
+                    Ssid,
+                    EffectivePassword,
+                    TxtRecoveryPin.Password,
+                    pairStatus,
                     controllerId,
-                    StringComparison.Ordinal))
+                    _cachedHasCredential))
+            {
+                Result.Foreground = (Brush)FindResource("Error");
+                Result.Text = "Enter the Pi's 8-digit PIN before continuing.";
+                Form.IsEnabled = true;
+                return;
+            }
+            var replacementConfirmed = true;
+            if (OnboardingPolicy.RequiresReplacement(pairStatus, controllerId))
             {
                 var replace = MessageBox.Show(
                     this,
@@ -174,7 +241,12 @@ public partial class WifiSetupWindow : Window
                     "Replace paired laptop",
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Warning);
-                if (replace != MessageBoxResult.Yes)
+                replacementConfirmed = replace == MessageBoxResult.Yes;
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!OnboardingPolicy.CanProceedWithPairing(
+                        pairStatus,
+                        controllerId,
+                        replacementConfirmed))
                 {
                     Result.Text = "Setup cancelled. The Pi is still paired to the previous laptop.";
                     Form.IsEnabled = true;
@@ -183,9 +255,10 @@ public partial class WifiSetupWindow : Window
             }
 
             string deviceId;
-            if (pairStatus.Paired &&
-                string.Equals(pairStatus.ControllerId, controllerId, StringComparison.Ordinal) &&
-                _vault.TryGet(pairStatus.DeviceId) is not null)
+            if (OnboardingPolicy.CanReuseCredential(
+                    pairStatus,
+                    controllerId,
+                    _cachedHasCredential))
             {
                 // A prior Wi-Fi attempt may have failed after pairing. Reuse the
                 // retained credential instead of consuming the PIN again.
@@ -197,33 +270,45 @@ public partial class WifiSetupWindow : Window
                 var paired = await _pairing.PairAsync(
                     PiUsbBase,
                     TxtRecoveryPin.Password,
-                    controllerId);
-                if (!string.Equals(paired.ControllerId, controllerId, StringComparison.Ordinal))
-                    throw new InvalidDataException("The Pi returned the wrong controller identity.");
+                    controllerId,
+                    cancellationToken);
+                OnboardingPolicy.ValidatePairResult(pairStatus, paired);
                 _vault.Put(paired.DeviceId, paired.Secret);
                 deviceId = paired.DeviceId;
+                _cachedPairStatus =
+                    new PairStatus(deviceId, true, controllerId);
+                _cachedHasCredential = true;
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             Result.Text = "Sending your WiFi details to the paired Pi…";
             var r = await _wifi.ConnectAsync(
                 PiUsbBase,
                 Ssid,
                 EffectivePassword,
                 _vault,
-                deviceId);
+                deviceId,
+                cancellationToken);
 
+            cancellationToken.ThrowIfCancellationRequested();
             Result.Text = "Checking the Pi got online…";
-            var wifiStatus = await _wifi.GetStatusAsync(PiUsbBase);
+            var wifiStatus = await _wifi.GetStatusAsync(
+                PiUsbBase,
+                cancellationToken);
             if (!wifiStatus.Connected)
             {
-                await Task.Delay(3000);
-                wifiStatus = await _wifi.GetStatusAsync(PiUsbBase);
+                await Task.Delay(3000, cancellationToken);
+                wifiStatus = await _wifi.GetStatusAsync(
+                    PiUsbBase,
+                    cancellationToken);
             }
+            cancellationToken.ThrowIfCancellationRequested();
             var ok = wifiStatus.Connected;
             if (ok)
             {
                 var status = await _http.GetFromJsonAsync<StatusInfo>(
-                    PiUsbBase + "/api/status")
+                    PiUsbBase + "/api/status",
+                    cancellationToken)
                     ?? throw new InvalidDataException("The Pi returned an empty status.");
                 if (!string.Equals(status.DeviceId, deviceId, StringComparison.Ordinal))
                     throw new InvalidDataException("The Pi identity changed during setup.");
@@ -231,29 +316,25 @@ public partial class WifiSetupWindow : Window
                 if (string.IsNullOrWhiteSpace(lanIp))
                     throw new InvalidDataException("The Pi connected but did not report its WiFi address.");
 
+                var piName = string.IsNullOrWhiteSpace(status.Name) ? "New Pi" : status.Name;
+                var store = new PiSignage.Signage.DeviceStore();
+                var list = PiSignage.Signage.DeviceStore.Upsert(store.Load(),
+                    new PiSignage.Signage.SavedDevice {
+                        DeviceId = deviceId,
+                        Name = piName,
+                        Hostname = piName,
+                        Ip = lanIp,
+                        Port = new Uri(PiUsbBase).Port,
+                    });
+                store.Save(list);
+                cancellationToken.ThrowIfCancellationRequested();
+                NewDeviceIp = lanIp;
+                NewDeviceHostname = piName;
+                NewDeviceId = deviceId;
                 MarkDone(Step2Head);
                 MarkDone(Step3Head);
                 Result.Foreground = (Brush)FindResource("Success");
                 Result.Text = $"✓ Your Pi is online at {lanIp}. You can unplug the cable — it's in your device list now.";
-
-                var piName = string.IsNullOrWhiteSpace(status.Name) ? "New Pi" : status.Name;
-                try
-                {
-                    var store = new PiSignage.Signage.DeviceStore();
-                    var list = PiSignage.Signage.DeviceStore.Upsert(store.Load(),
-                        new PiSignage.Signage.SavedDevice {
-                            DeviceId = deviceId,
-                            Name = piName,
-                            Hostname = piName,
-                            Ip = lanIp,
-                            Port = new Uri(PiUsbBase).Port,
-                        });
-                    store.Save(list);
-                    NewDeviceIp = lanIp;
-                    NewDeviceHostname = piName;
-                    NewDeviceId = deviceId;
-                }
-                catch { /* WiFi connect already succeeded; worst case the user runs Find my Pi */ }
             }
             else
             {
@@ -264,6 +345,10 @@ public partial class WifiSetupWindow : Window
                 Form.IsEnabled = true;
             }
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
         catch (Exception ex)
         {
             Result.Foreground = (Brush)FindResource("Error");
@@ -271,6 +356,10 @@ public partial class WifiSetupWindow : Window
                 " If pairing succeeded, it is saved and the WiFi step can be retried.";
             Form.IsEnabled = true;
         }
-        finally { Working.Visibility = Visibility.Collapsed; }
+        finally
+        {
+            if (!_lifetime.IsCancellationRequested)
+                Working.Visibility = Visibility.Collapsed;
+        }
     }
 }

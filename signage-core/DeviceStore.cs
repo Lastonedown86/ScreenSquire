@@ -68,7 +68,11 @@ public sealed class DeviceStore
         }
         else
         {
-            if (!string.IsNullOrWhiteSpace(dev.DeviceId)) existing.DeviceId = dev.DeviceId;
+            if (string.IsNullOrWhiteSpace(existing.DeviceId) &&
+                !string.IsNullOrWhiteSpace(dev.DeviceId))
+            {
+                existing.DeviceId = dev.DeviceId;
+            }
             if (!string.IsNullOrWhiteSpace(dev.Hostname)) existing.Hostname = dev.Hostname;
             existing.Ip = dev.Ip;
             if (dev.Port > 0) existing.Port = dev.Port;
