@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python agent tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            agent/requirements.txt
+            agent/requirements-dev.txt
+      - name: Install Python dependencies
+        run: python -m pip install -r agent/requirements.txt -r agent/requirements-dev.txt
+      - name: Test without altering runtime data
+        shell: bash
+        run: |
+          snapshot() {
+            if [[ -f agent/data/dashboard.json ]]; then
+              sha256sum agent/data/dashboard.json
+              stat -c '%Y' agent/data/dashboard.json
+            else
+              printf 'MISSING\n'
+            fi
+          }
+          before="$(snapshot)"
+          python -m pytest agent -q
+          after="$(snapshot)"
+          if [[ "$before" != "$after" ]]; then
+            echo "Runtime dashboard data changed during tests"
+            exit 1
+          fi
+
+  dotnet:
+    name: .NET tests and Release build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Restore
+        run: dotnet restore PiSignage.slnx
+      - name: Test
+        run: dotnet test PiSignage.slnx -c Release --no-restore
+      - name: Build
+        run: dotnet build PiSignage.slnx -c Release --no-restore
+
+  shell:
+    name: Shell and repository checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate Raspberry Pi scripts
+        shell: bash
+        run: |
+          for script in pi-setup/*.sh; do
+            bash -n "$script"
+          done
+      - name: Check repository whitespace
+        run: git log --check --oneline --all
