@@ -16,6 +16,15 @@ public sealed class ProvisioningSecurityTests
             Path.Combine(root, "windows-app", "MainWindow.xaml.cs"));
 
         Assert.Contains("do_vnc 1", provisioning, StringComparison.Ordinal);
+        Assert.Contains(
+            provisioning.Split(
+                new[] { '\r', '\n' },
+                StringSplitOptions.RemoveEmptyEntries),
+            line => line.Trim() == "sudo raspi-config nonint do_vnc 1");
+        Assert.DoesNotContain(
+            "do_vnc 1 || true",
+            provisioning,
+            StringComparison.Ordinal);
         Assert.DoesNotContain("do_vnc 0", provisioning, StringComparison.Ordinal);
         Assert.DoesNotContain("wayvnc", provisioning, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("BtnRemote", xaml, StringComparison.Ordinal);

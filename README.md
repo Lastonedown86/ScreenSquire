@@ -194,10 +194,10 @@ real-Pi testing as a release gate in addition to these automated checks.
 
 Automated release evidence recorded on 2026-07-25:
 
-- Python: 119 passed; the runtime `agent/data/dashboard.json` hash and
+- Python: 127 passed; the runtime `agent/data/dashboard.json` hash and
   timestamp were unchanged. The only warning was the accepted deprecation from
   the pinned Starlette test-client stack.
-- .NET: 120 passed.
+- .NET: 123 passed.
 - Release build: succeeded with zero warnings and zero errors.
 - NuGet advisory scan: no known vulnerable direct or transitive packages in
   `signage-core`, `PiSignageControl`, or `signage-core.Tests` from the configured

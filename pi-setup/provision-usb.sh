@@ -72,7 +72,7 @@ rm -f "$TMP_SUDO"
 # 7. Remote support is attended on the store laptop through Windows Quick
 #    Assist. Explicitly disable Raspberry Pi VNC, including on images where it
 #    was enabled previously.
-sudo raspi-config nonint do_vnc 1 || true
+sudo raspi-config nonint do_vnc 1
 
 sudo systemctl enable usb-gadget-ncm.service
 echo "==> USB provisioning installed. Reboot, then this Pi presents a USB setup link at 10.55.0.1:8080."
