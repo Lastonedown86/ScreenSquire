@@ -1,4 +1,5 @@
 import io
+import stat
 import warnings
 import zipfile
 from pathlib import Path
@@ -13,7 +14,11 @@ GOOD_MODULES = {
     "control_auth.py": "AUTH = True\n",
     "delivery_reset.py": "RESET = True\n",
 }
-GOOD_BUNDLE = {**GOOD_MODULES, "static/kiosk.html": "<new>"}
+GOOD_BUNDLE = {
+    **GOOD_MODULES,
+    "static/kiosk.html": "<new>",
+    "static/dashboard.html": "<dashboard>",
+}
 OLD_MODULES = {
     name: f"OLD_{name.replace('.', '_')} = True\n"
     for name in GOOD_MODULES
@@ -58,6 +63,7 @@ def _fake_app_dir(agent_module, tmp_path, monkeypatch):
     for name, source in OLD_MODULES.items():
         (tmp_path / name).write_text(source)
     (tmp_path / "static" / "kiosk.html").write_text("<old>")
+    (tmp_path / "static" / "dashboard.html").write_text("<old-dashboard>")
     (tmp_path / "static" / "removed.html").write_text("<stale>")
     monkeypatch.setattr(agent_module, "APP_DIR", tmp_path)
 
@@ -161,6 +167,84 @@ def test_update_requires_every_root_module(
     response = _post(signed, _zip_bytes(entries))
     assert response.status_code == 400
     assert missing in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "missing",
+    ["static/kiosk.html", "static/dashboard.html"],
+)
+def test_update_requires_each_nonempty_display_page(
+    agent_module,
+    signed,
+    tmp_path,
+    monkeypatch,
+    missing,
+):
+    _fake_app_dir(agent_module, tmp_path, monkeypatch)
+    entries = {name: value for name, value in GOOD_BUNDLE.items() if name != missing}
+    response = _post(signed, _zip_bytes(entries))
+    assert response.status_code == 400
+    assert missing in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "empty",
+    ["static/kiosk.html", "static/dashboard.html"],
+)
+def test_update_rejects_empty_display_page(
+    agent_module,
+    signed,
+    tmp_path,
+    monkeypatch,
+    empty,
+):
+    _fake_app_dir(agent_module, tmp_path, monkeypatch)
+    response = _post(
+        signed,
+        _zip_bytes({**GOOD_BUNDLE, empty: ""}),
+    )
+    assert response.status_code == 400
+    assert empty in response.json()["detail"]
+
+
+def test_update_rejects_static_directory_without_display_pages(
+    agent_module,
+    signed,
+    tmp_path,
+    monkeypatch,
+):
+    _fake_app_dir(agent_module, tmp_path, monkeypatch)
+    entries = list(GOOD_MODULES.items()) + [("static/", "")]
+    response = _post(signed, _zip_entry_bytes(entries))
+    assert response.status_code == 400
+    assert "static/kiosk.html" in response.json()["detail"]
+
+
+def test_update_rejects_symlink_as_required_display_page(
+    agent_module,
+    signed,
+    tmp_path,
+    monkeypatch,
+):
+    _fake_app_dir(agent_module, tmp_path, monkeypatch)
+    entries = [
+        (name, source)
+        for name, source in GOOD_BUNDLE.items()
+        if name != "static/kiosk.html"
+    ]
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, source in entries:
+            zf.writestr(name, source)
+        link = zipfile.ZipInfo("static/kiosk.html")
+        link.create_system = 3
+        link.external_attr = (stat.S_IFLNK | 0o777) << 16
+        zf.writestr(link, "dashboard.html")
+
+    response = _post(signed, buf.getvalue())
+
+    assert response.status_code == 400
+    assert "regular" in response.json()["detail"].lower()
 
 
 def test_update_rejects_expanded_archive_over_limit(

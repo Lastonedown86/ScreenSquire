@@ -83,6 +83,62 @@ public class ControlRequestSerializationTests
         await first;
     }
 
+    [Fact]
+    public async Task Send_waits_for_cross_process_device_lock_before_allocating_counter()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            $"pisignage-send-lock-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var vaultPath = Path.Combine(root, "credentials.dat");
+            const string deviceId = "cross-process-lock-device";
+            var lockPath = ControlSendLock.PathFor(vaultPath, deviceId);
+            Directory.CreateDirectory(Path.GetDirectoryName(lockPath)!);
+            using var held = new FileStream(
+                lockPath,
+                FileMode.OpenOrCreate,
+                FileAccess.ReadWrite,
+                FileShare.None);
+            var counter = 0L;
+            var entered = NewSignal();
+            var client = new HttpClient(new ControlledHandler(
+                entered,
+                release: null,
+                """{"ok":true}"""));
+            var request = new HttpRequestMessage(
+                HttpMethod.Post,
+                "http://pi:8080/api/next");
+            var context = new ControlContext(
+                deviceId,
+                "test-controller",
+                Enumerable.Repeat((byte)1, 32).ToArray(),
+                () => Interlocked.Increment(ref counter),
+                vaultPath);
+
+            var sending = SignedControlRequest.SendAsync(
+                client,
+                request,
+                context,
+                Array.Empty<byte>());
+            await Task.Delay(250);
+
+            Assert.False(sending.IsCompleted);
+            Assert.Equal(0, Volatile.Read(ref counter));
+            Assert.DoesNotContain(deviceId, Path.GetFileName(lockPath));
+
+            held.Dispose();
+            await sending.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Equal(1, Volatile.Read(ref counter));
+            Assert.Empty(File.ReadAllBytes(lockPath));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     static TaskCompletionSource NewSignal() =>
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 

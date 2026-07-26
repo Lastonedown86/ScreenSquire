@@ -699,6 +699,7 @@ public partial class SignageWindow : Window
             stableDeviceId,
             _credentialVault.Load().ControllerId,
             credential.Secret,
-            () => _credentialVault.TakeNextCounter(stableDeviceId));
+            () => _credentialVault.TakeNextCounter(stableDeviceId),
+            _credentialVault.Path);
     }
 }

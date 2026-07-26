@@ -1,6 +1,7 @@
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Runtime.ExceptionServices;
 using System.Text.Json.Serialization;
 using PiSignage.Signage;
 
@@ -9,7 +10,8 @@ namespace PiSignage.Control;
 public sealed record DeliveryResetResult(bool Ok, string DeviceId);
 public sealed record DeliveryCleanupError(string Operation, string Message);
 public sealed record DeliveryPreparationOutcome(
-    IReadOnlyList<DeliveryCleanupError> CleanupErrors);
+    IReadOnlyList<DeliveryCleanupError> CleanupErrors,
+    bool ResetWasConfirmedAfterAmbiguousFailure = false);
 
 public interface IDeliveryPreparationOperations
 {
@@ -98,18 +100,52 @@ public sealed class DeliveryPreparation(IDeliveryPreparationOperations operation
                 "The Pi connected over USB is not paired with this controller.");
         }
 
-        var reset = await _operations.SendResetAsync(
-            UsbBaseUrl,
-            controlContext,
-            cancellationToken);
-        if (!reset.Ok ||
-            !string.Equals(
-                reset.DeviceId,
-                device.DeviceId,
-                StringComparison.Ordinal))
+        var resetConfirmedAfterAmbiguousFailure = false;
+        try
         {
-            throw new InvalidDataException(
-                "The Pi returned an invalid delivery-reset result.");
+            var reset = await _operations.SendResetAsync(
+                UsbBaseUrl,
+                controlContext,
+                cancellationToken);
+            if (!reset.Ok ||
+                !string.Equals(
+                    reset.DeviceId,
+                    device.DeviceId,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidDataException(
+                    "The Pi returned an invalid delivery-reset result.");
+            }
+        }
+        catch (Exception resetFailure)
+            when (!cancellationToken.IsCancellationRequested)
+        {
+            PairStatus? confirmation = null;
+            try
+            {
+                confirmation = await _operations.GetPairStatusAsync(
+                    UsbBaseUrl,
+                    cancellationToken);
+            }
+            catch
+            {
+                // Preserve the original reset failure. An unreachable or
+                // unreadable confirmation endpoint cannot prove the reset.
+            }
+            if (confirmation is not null &&
+                string.Equals(
+                    confirmation.DeviceId,
+                    device.DeviceId,
+                    StringComparison.Ordinal) &&
+                !confirmation.Paired)
+            {
+                resetConfirmedAfterAmbiguousFailure = true;
+            }
+            else
+            {
+                ExceptionDispatchInfo.Capture(resetFailure).Throw();
+                throw;
+            }
         }
 
         // All builder-side cleanup is intentionally after confirmed remote
@@ -131,7 +167,9 @@ public sealed class DeliveryPreparation(IDeliveryPreparationOperations operation
             cleanupErrors,
             "cache",
             () => _operations.ClearThumbnails(device));
-        return new DeliveryPreparationOutcome(cleanupErrors.AsReadOnly());
+        return new DeliveryPreparationOutcome(
+            cleanupErrors.AsReadOnly(),
+            resetConfirmedAfterAmbiguousFailure);
     }
 
     static void AttemptCleanup(

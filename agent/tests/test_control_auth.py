@@ -68,8 +68,25 @@ def test_signed_mutation_succeeds_once_and_replay_fails(client, paired_signer):
         ("POST", "/api/next", {}),
     ],
 )
-def test_every_control_mutation_rejects_unsigned_requests(client, method, path, kwargs):
-    assert client.request(method, path, **kwargs).status_code == 401
+def test_every_control_mutation_rejects_unsigned_requests(
+    agent_module,
+    client,
+    method,
+    path,
+    kwargs,
+):
+    if path == "/api/wifi":
+        # Wi-Fi has an additional physical-link boundary. Exercise it from
+        # USB here so this test specifically proves missing HMAC is rejected;
+        # test_wifi separately proves even a valid signature gets 403 on LAN.
+        with TestClient(
+            agent_module.app,
+            client=("10.55.0.10", 50000),
+        ) as usb_client:
+            response = usb_client.request(method, path, **kwargs)
+    else:
+        response = client.request(method, path, **kwargs)
+    assert response.status_code == 401
 
 
 @pytest.mark.parametrize(

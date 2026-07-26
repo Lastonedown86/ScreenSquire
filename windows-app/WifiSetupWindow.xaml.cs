@@ -422,6 +422,7 @@ public partial class WifiSetupWindow : Window
             stableDeviceId,
             _vault.Load().ControllerId,
             credential.Secret,
-            () => _vault.TakeNextCounter(stableDeviceId));
+            () => _vault.TakeNextCounter(stableDeviceId),
+            _vault.Path);
     }
 }

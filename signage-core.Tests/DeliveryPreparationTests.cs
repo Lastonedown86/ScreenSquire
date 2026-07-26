@@ -72,8 +72,79 @@ public class DeliveryPreparationTests
             {
                 "status:http://10.55.0.1:8080",
                 "reset:http://10.55.0.1:8080",
+                "status:http://10.55.0.1:8080",
             },
             operations.Events);
+    }
+
+    [Fact]
+    public async Task RunAsync_treats_lost_reset_response_as_success_when_usb_is_now_unpaired()
+    {
+        var operations = new RecordingOperations
+        {
+            ResetFailure = new TaskCanceledException("response timed out"),
+        };
+        operations.PairStatuses.Enqueue(
+            new PairStatus("selected-device", true, "builder-controller"));
+        operations.PairStatuses.Enqueue(
+            new PairStatus("selected-device", false, null));
+
+        var outcome = await new DeliveryPreparation(operations).RunAsync(
+            Device("selected-device"),
+            Context("selected-device"));
+
+        Assert.True(outcome.ResetWasConfirmedAfterAmbiguousFailure);
+        Assert.Equal(
+            new[]
+            {
+                "status:http://10.55.0.1:8080",
+                "reset:http://10.55.0.1:8080",
+                "status:http://10.55.0.1:8080",
+                "credential:selected-device",
+                "device:selected-device",
+                "settings:selected-device",
+                "cache:selected-device",
+            },
+            operations.Events);
+        Assert.Empty(outcome.CleanupErrors);
+    }
+
+    [Theory]
+    [InlineData("paired")]
+    [InlineData("mismatch")]
+    [InlineData("unreachable")]
+    public async Task RunAsync_preserves_local_records_when_ambiguous_reset_cannot_be_confirmed(
+        string confirmation)
+    {
+        var operations = new RecordingOperations
+        {
+            ResetFailure = new TaskCanceledException("response timed out"),
+        };
+        operations.PairStatuses.Enqueue(
+            new PairStatus("selected-device", true, "builder-controller"));
+        if (confirmation == "paired")
+        {
+            operations.PairStatuses.Enqueue(
+                new PairStatus("selected-device", true, "builder-controller"));
+        }
+        else if (confirmation == "mismatch")
+        {
+            operations.PairStatuses.Enqueue(
+                new PairStatus("different-device", false, null));
+        }
+        else
+        {
+            operations.StatusFailures.Enqueue(new HttpRequestException("USB unavailable"));
+        }
+
+        await Assert.ThrowsAsync<TaskCanceledException>(
+            () => new DeliveryPreparation(operations).RunAsync(
+                Device("selected-device"),
+                Context("selected-device")));
+
+        Assert.DoesNotContain(
+            operations.Events,
+            item => item.StartsWith("credential:", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -199,6 +270,8 @@ public class DeliveryPreparationTests
         public List<string> Events { get; } = new();
         public PairStatus PairStatus { get; set; } =
             new("selected-device", true, "builder-controller");
+        public Queue<PairStatus> PairStatuses { get; } = new();
+        public Queue<Exception> StatusFailures { get; } = new();
         public Exception? ResetFailure { get; set; }
         public HashSet<string> CleanupFailures { get; } =
             new(StringComparer.Ordinal);
@@ -210,6 +283,10 @@ public class DeliveryPreparationTests
             CancellationToken cancellationToken)
         {
             Events.Add($"status:{baseUrl}");
+            if (PairStatuses.TryDequeue(out var status))
+                return Task.FromResult(status);
+            if (StatusFailures.TryDequeue(out var failure))
+                return Task.FromException<PairStatus>(failure);
             return Task.FromResult(PairStatus);
         }
 

@@ -153,8 +153,8 @@ pair the builder laptop to a production Pi.
 | Public read | GET | `/api/status`, `/api/playlist`, `/api/media`, `/api/dashboard`, `/api/wifi/status`, `/api/kiosk` | Current state |
 | USB read | GET | `/api/pair/status` | Stable identity and current pairing state |
 | USB + PIN bootstrap | POST | `/api/pair` | Establish or replace the Controller laptop |
-| Signed control | POST/PUT/DELETE | `/api/dashboard`, `/api/wifi`, `/api/kiosk`, `/api/name`, `/api/playlist`, `/api/media*`, `/api/show-now`, `/api/next`, `/api/update` | Change Display Pi state |
-| USB + signed control | POST | `/api/prepare-delivery` | Remove builder/customer state before shipment |
+| Signed control | POST/PUT/DELETE | `/api/dashboard`, `/api/kiosk`, `/api/name`, `/api/playlist`, `/api/media*`, `/api/show-now`, `/api/next`, `/api/update` | Change Display Pi state |
+| USB + signed control | POST | `/api/wifi`, `/api/prepare-delivery` | Set store Wi-Fi or remove ownership only over the physical USB link |
 
 The agent advertises `_pisign._tcp.local` over mDNS with its name and port. The
 app verifies the stable device ID returned by `/api/status`; names, IP addresses,

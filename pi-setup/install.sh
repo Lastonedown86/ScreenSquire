@@ -95,8 +95,7 @@ sudo systemctl enable --now zramswap.service 2>/dev/null || true
 sudo systemctl restart zramswap.service 2>/dev/null || true
 
 # ---- kiosk as a systemd USER service, so the app can stop/start it on demand ----
-# (stopping it drops the Pi to its desktop, controllable over VNC; starting it
-#  brings signage back)
+# (stopping it exposes the local Pi desktop; starting it brings signage back)
 mkdir -p "$HOME_DIR/.config/systemd/user"
 cat > "$HOME_DIR/.config/systemd/user/pisignage-kiosk.service" <<EOF
 [Unit]

@@ -9,7 +9,52 @@ public sealed record ControlContext(
     string DeviceId,
     string ControllerId,
     byte[] Secret,
-    Func<long> TakeNextCounter);
+    Func<long> TakeNextCounter,
+    string? CredentialVaultPath = null);
+
+public static class ControlSendLock
+{
+    public static string PathFor(string credentialVaultPath, string deviceId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(credentialVaultPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(deviceId);
+        var directory = Path.GetDirectoryName(Path.GetFullPath(credentialVaultPath))
+            ?? throw new InvalidOperationException(
+                "Credential vault path has no directory.");
+        var deviceHash = Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(deviceId)));
+        return Path.Combine(directory, $".control-send-{deviceHash}.lock");
+    }
+
+    public static async Task<FileStream> AcquireAsync(
+        string credentialVaultPath,
+        string deviceId,
+        CancellationToken cancellationToken)
+    {
+        var path = PathFor(credentialVaultPath, deviceId);
+        Directory.CreateDirectory(
+            Path.GetDirectoryName(path)
+            ?? throw new InvalidOperationException("Send lock has no directory."));
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                return new FileStream(
+                    path,
+                    FileMode.OpenOrCreate,
+                    FileAccess.ReadWrite,
+                    FileShare.None,
+                    bufferSize: 1,
+                    FileOptions.Asynchronous);
+            }
+            catch (IOException)
+            {
+                await Task.Delay(25, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+}
 
 public static class SignedControlRequest
 {
@@ -36,6 +81,12 @@ public static class SignedControlRequest
         await deviceLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            await using var processLock = context.CredentialVaultPath is null
+                ? null
+                : await ControlSendLock.AcquireAsync(
+                    context.CredentialVaultPath,
+                    context.DeviceId,
+                    cancellationToken).ConfigureAwait(false);
             var entityHash = Convert.ToHexString(SHA256.HashData(entityBytes))
                 .ToLowerInvariant();
             ControlRequestSigner.Sign(
