@@ -24,7 +24,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="tools\vncviewer.exe" CopyToOutputDirectory="PreserveNewest" Condition="Exists('tools\vncviewer.exe')" />
+    <!-- Update (not Include): the SDK default glob already owns this file as a None
+         item; a second Include would duplicate it and the copy metadata gets lost.
+         TargetPath drops the tools\ folder — the app looks for the viewer next to
+         the exe (RemoteViewerLauncher.BundledViewerPath). -->
+    <None Update="tools\vncviewer.exe" CopyToOutputDirectory="PreserveNewest" TargetPath="vncviewer.exe" />
   </ItemGroup>
 
 </Project>
