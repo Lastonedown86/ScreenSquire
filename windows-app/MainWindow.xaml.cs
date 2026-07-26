@@ -350,6 +350,9 @@ public partial class MainWindow : Window
     private void OpenBookmarks_Click(object sender, RoutedEventArgs e)
         => new BookmarksWindow { Owner = this }.Show();
 
+    private void OpenSpotify_Click(object sender, RoutedEventArgs e)
+        => new SpotifyWindow { Owner = this }.Show();
+
     async void AddPi_Click(object sender, System.Windows.RoutedEventArgs e)
     {
         var wizard = new WifiSetupWindow { Owner = this };

@@ -103,6 +103,30 @@ public class SettingsStoreTests
     }
 
     [Fact]
+    public void SpotifyBookmarksRoundTrip()
+    {
+        var path = TempFile();
+        try
+        {
+            var store = new SettingsStore(path);
+            var s = new AppSettings();
+            s.SpotifyBookmarks.Add(new SpotifyBookmark
+            {
+                Type = "playlist",
+                Id = "4uLU6hMCjMI75M1A2tKUQC",
+                Url = "https://open.spotify.com/playlist/4uLU6hMCjMI75M1A2tKUQC",
+                Title = "Focus mix",
+            });
+            store.Save(s);
+            var b = Assert.Single(store.Load().SpotifyBookmarks);
+            Assert.Equal("playlist", b.Type);
+            Assert.Equal("4uLU6hMCjMI75M1A2tKUQC", b.Id);
+            Assert.Equal("Focus mix", b.Title);
+        }
+        finally { System.IO.File.Delete(path); }
+    }
+
+    [Fact]
     public void TargetsAndBoardsRoundTrip()
     {
         var path = TempFile();

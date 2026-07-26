@@ -158,7 +158,7 @@ pair the builder laptop to a production Pi.
 | Public read | GET | `/api/status`, `/api/playlist`, `/api/media`, `/api/dashboard`, `/api/wifi/status`, `/api/kiosk` | Current state |
 | USB read | GET | `/api/pair/status` | Stable identity and current pairing state |
 | USB + PIN bootstrap | POST | `/api/pair` | Establish or replace the Controller laptop |
-| Signed control | POST/PUT/DELETE | `/api/dashboard`, `/api/kiosk`, `/api/name`, `/api/playlist`, `/api/media*`, `/api/show-now`, `/api/next`, `/api/update` | Change Display Pi state |
+| Signed control | POST/PUT/DELETE | `/api/dashboard`, `/api/kiosk`, `/api/name`, `/api/playlist`, `/api/media*`, `/api/show-now`, `/api/next`, `/api/update`, `/api/youtube/control`, `/api/spotify/control` | Change Display Pi state |
 | USB + signed control | POST | `/api/wifi`, `/api/prepare-delivery` | Set store Wi-Fi or remove ownership only over the physical USB link |
 
 The agent advertises `_pisign._tcp.local` over mDNS with its name and port. The
@@ -250,6 +250,24 @@ Store-laptop simulation (second Windows profile or second laptop):
 - [ ] Pair once more from a third/replacement profile after accepting the
   replacement warning; verify the previous store profile receives HTTP 401 and
   the replacement succeeds.
+
+## Spotify on the TV
+
+The Spotify window in the app saves links (tracks, albums, playlists, podcast
+episodes, shows, artists) and plays them on one TV through Spotify's embedded
+player. The player renders as a centered card, with pause/resume and ±10 s
+seek from the app. There is no volume control — Spotify's embed API doesn't
+offer one; use the TV or amp remote.
+
+- Without a Spotify login on the Pi, tracks play 30-second previews. To get
+  full tracks, open Remote control once, sign into open.spotify.com in the
+  kiosk browser, and close the session — the kiosk profile is persistent, so
+  the login survives restarts.
+- Full-track playback also needs Widevine DRM in the Pi's Chromium build. If
+  it's missing, playback falls back to previews even when signed in.
+- When a track or playlist finishes, the TV returns to its normal rotation
+  within about 12 seconds. Artist pages have no defined end and stay up until
+  "Back to playlist" is clicked.
 
 ## Known limits
 
