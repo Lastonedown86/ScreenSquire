@@ -17,6 +17,14 @@ public class StatusInfo
     [JsonPropertyName("override_active")] public bool OverrideActive { get; set; }
     [JsonPropertyName("now_showing")] public NowShowing? NowShowing { get; set; }
     [JsonPropertyName("agent_version")] public string? AgentVersion { get; set; }
+    [JsonPropertyName("youtube_state")] public YouTubeState? YouTubeState { get; set; }
+}
+
+// Last player state a kiosk reported: playing | paused | ended | error.
+public class YouTubeState
+{
+    [JsonPropertyName("state")] public string? State { get; set; }
+    [JsonPropertyName("videoId")] public string? VideoId { get; set; }
 }
 
 public class NowShowing
@@ -109,6 +117,8 @@ public class ShowNowRequest
     [JsonPropertyName("type")] public string Type { get; set; } = "url";
     [JsonPropertyName("source")] public string Source { get; set; } = "";
     [JsonPropertyName("duration")] public int? Duration { get; set; }
+    // youtube only: starting volume 0-100 (agents before 2026.07.26.3 ignore it)
+    [JsonPropertyName("volume")] public int? Volume { get; set; }
 }
 
 public class DiscoveredDevice

@@ -62,7 +62,7 @@ PLAYLIST_FILE = DATA_DIR / "playlist.json"
 PORT = int(os.environ.get("SIGNAGE_PORT", "8080"))
 NAME_FILE = DATA_DIR / "name.txt"
 TRUST_FILE = DATA_DIR / "trust.json"
-AGENT_VERSION = "2026.07.26.2"  # bump on every agent change; the app compares this
+AGENT_VERSION = "2026.07.26.3"  # bump on every agent change; the app compares this
 
 
 def _load_name() -> str:
@@ -112,7 +112,9 @@ def _media_path(name: str) -> Path:
 
 
 # ---------------------------------------------------------------- models
-ItemType = Literal["image", "video", "url"]
+# "youtube": source is a bare 11-char video id, rendered by the kiosk with the
+# YouTube IFrame Player API (sound on, controllable) instead of a muted embed.
+ItemType = Literal["image", "video", "url", "youtube"]
 
 
 class PlaylistItem(BaseModel):
@@ -133,6 +135,7 @@ class ShowNowRequest(BaseModel):
     type: ItemType
     source: str
     duration: Optional[int] = Field(default=None, ge=1, le=86400)  # None = until cleared
+    volume: Optional[int] = Field(default=None, ge=0, le=100)  # youtube only
 
 
 # ---------------------------------------------------------------- state
@@ -142,6 +145,9 @@ class State:
         self.index: int = 0                      # current position in playlist
         self.override: Optional[ShowNowRequest] = None
         self.override_until: Optional[float] = None
+        # stable id for the current override, so re-broadcasts after unrelated
+        # bumps don't look like a new item to the kiosk (which would reload it)
+        self.override_id: Optional[str] = None
         self.version: int = 0                    # bumped on any change -> wakes scheduler
         self.wake = asyncio.Event()
 
@@ -184,6 +190,11 @@ class Hub:
 
     async def show(self, payload: dict) -> None:
         self.current = payload
+        await self.broadcast(payload)
+
+    async def broadcast(self, payload: dict) -> None:
+        """Send without storing — control frames must never become `current`,
+        or a reconnecting kiosk would be caught up with one instead of content."""
         dead = []
         for ws in list(self.clients):  # copy: a client may register mid-broadcast
             try:
@@ -242,6 +253,8 @@ def _normalize_url(src: str) -> str:
 
 
 def _item_payload(item: PlaylistItem) -> dict:
+    if item.type == "youtube":
+        return {"type": "youtube", "videoId": item.source, "id": item.id}
     if item.type == "url":
         return {"type": "url", "src": _normalize_url(item.source), "id": item.id}
     return {"type": item.type, "src": f"/media/{item.source}", "id": item.id}
@@ -262,7 +275,13 @@ async def scheduler() -> None:
                 state.override_until = None
             else:
                 ov = state.override
-                await hub.show(_item_payload(PlaylistItem(type=ov.type, source=ov.source)))
+                item = PlaylistItem(type=ov.type, source=ov.source)
+                if state.override_id:
+                    item.id = state.override_id
+                payload = _item_payload(item)
+                if ov.type == "youtube" and ov.volume is not None:
+                    payload["volume"] = ov.volume
+                await hub.show(payload)
                 timeout = (state.override_until - now) if state.override_until else None
                 await _sleep_or_wake(timeout)
                 continue
@@ -951,12 +970,47 @@ async def update_agent(
     return {"ok": True, "version": new_version}
 
 
+# last player state reported by a kiosk ({"state": ..., "videoId": ...});
+# surfaced in /api/status so the app can advance its queue on "ended"
+_youtube_state: Optional[dict] = None
+
+_YT_BACKSTOP_SECONDS = 10.0
+
+
+async def _yt_backstop(ended_override: ShowNowRequest) -> None:
+    """If the app isn't around to clear a finished video, do it ourselves so
+    the TV doesn't sit on the YouTube end screen forever. The app's queue poll
+    (1 s) replaces the override long before this fires, so no race."""
+    await asyncio.sleep(_YT_BACKSTOP_SECONDS)
+    if state.override is ended_override:
+        state.override = None
+        state.override_until = None
+        state.override_id = None
+        state.bump()
+
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
+    global _youtube_state
     await hub.register(ws)
     try:
         while True:
-            await ws.receive_text()  # kiosk pings; content unused for now
+            msg = await ws.receive_text()
+            try:
+                data = json.loads(msg)
+            except ValueError:
+                continue  # keepalive "ping"
+            if isinstance(data, dict) and data.get("type") == "yt-state":
+                _youtube_state = {
+                    "state": data.get("state"),
+                    "videoId": data.get("videoId"),
+                }
+                if (
+                    data.get("state") == "ended"
+                    and state.override is not None
+                    and state.override.type == "youtube"
+                ):
+                    asyncio.create_task(_yt_backstop(state.override))
     except WebSocketDisconnect:
         pass
     finally:
@@ -998,6 +1052,7 @@ async def status():
         "playlist_enabled": state.playlist.enabled,
         "override_active": state.override is not None,
         "now_showing": hub.current,
+        "youtube_state": _youtube_state,
     }
 
 
@@ -1013,6 +1068,8 @@ async def put_playlist(playlist: Playlist):
         if item.type in ("image", "video"):
             if not _media_path(item.source).is_file():
                 raise HTTPException(400, f"Media file not found: {item.source}")
+        elif item.type == "youtube" and _youtube_id(item.source) is None:
+            raise HTTPException(400, f"Not a valid YouTube video id: {item.source}")
     state.playlist = playlist
     state.index = 0
     state.save_playlist()
@@ -1144,7 +1201,15 @@ async def show_now(req: ShowNowRequest):
     if req.type in ("image", "video"):
         if not _media_path(req.source).is_file():
             raise HTTPException(400, f"Media file not found: {req.source}")
+    if req.type == "youtube":
+        if _youtube_id(req.source) is None:
+            raise HTTPException(400, "Not a valid YouTube video id")
+        # drop any stale player state, or replaying the same video would look
+        # instantly "ended" to a queue-polling controller
+        global _youtube_state
+        _youtube_state = None
     state.override = req
+    state.override_id = uuid.uuid4().hex[:8]
     if req.duration:
         state.override_until = asyncio.get_event_loop().time() + req.duration
     else:
@@ -1157,7 +1222,24 @@ async def show_now(req: ShowNowRequest):
 async def clear_show_now():
     state.override = None
     state.override_until = None
+    state.override_id = None
     state.bump()
+    return {"ok": True}
+
+
+class YouTubeControlRequest(BaseModel):
+    action: Literal["play", "pause", "seek", "volume"]
+    # seek: signed offset in seconds; volume: 0-100
+    value: Optional[int] = Field(default=None, ge=-86400, le=86400)
+
+
+@app.post("/api/youtube/control", dependencies=[Depends(require_control_mutation)])
+async def youtube_control(req: YouTubeControlRequest):
+    if req.action == "volume" and (req.value is None or not 0 <= req.value <= 100):
+        raise HTTPException(400, "volume needs a value between 0 and 100")
+    if req.action == "seek" and req.value is None:
+        raise HTTPException(400, "seek needs an offset value")
+    await hub.broadcast({"type": "yt-control", "action": req.action, "value": req.value})
     return {"ok": True}
 
 

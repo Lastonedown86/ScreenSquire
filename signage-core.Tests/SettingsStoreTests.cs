@@ -77,6 +77,32 @@ public class SettingsStoreTests
     }
 
     [Fact]
+    public void YouTubeBookmarksRoundTrip()
+    {
+        var path = TempFile();
+        try
+        {
+            var store = new SettingsStore(path);
+            var s = new AppSettings { YouTubeVolume = 40 };
+            s.YouTubeBookmarks.Add(new YouTubeBookmark
+            {
+                VideoId = "2B_L3WsMqTc",
+                Url = "https://www.youtube.com/watch?v=2B_L3WsMqTc",
+                Title = "Test video",
+                AuthorName = "Someone",
+                ThumbnailUrl = "https://i.ytimg.com/vi/2B_L3WsMqTc/hqdefault.jpg",
+            });
+            store.Save(s);
+            var back = store.Load();
+            Assert.Equal(40, back.YouTubeVolume);
+            var b = Assert.Single(back.YouTubeBookmarks);
+            Assert.Equal("2B_L3WsMqTc", b.VideoId);
+            Assert.Equal("Test video", b.Title);
+        }
+        finally { System.IO.File.Delete(path); }
+    }
+
+    [Fact]
     public void TargetsAndBoardsRoundTrip()
     {
         var path = TempFile();

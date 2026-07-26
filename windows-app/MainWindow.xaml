@@ -68,6 +68,8 @@
                         ToolTip="This app came with newer Pi software — click to update your Pis. The TV will blink once."/>
                 <Button Content="Tournament _Signage" Margin="0,0,6,4" Click="OpenSignage_Click"
                         ToolTip="Capture pairings/standings from your screen and run the round timer"/>
+                <Button Content="_YouTube" Margin="0,0,6,4" Click="OpenBookmarks_Click"
+                        ToolTip="Save YouTube links and play them on a TV, with sound"/>
                 <Button Content="Set up a _new Pi" Margin="0,0,0,4" Click="AddPi_Click"
                         ToolTip="Connect a brand-new Pi to your WiFi using a USB cable"/>
                 <Button x:Name="BtnPrepareDelivery" Content="Prepare Pi for delivery"
