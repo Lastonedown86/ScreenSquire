@@ -14,10 +14,16 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- ============ connect bar ============ -->
+        <!-- ============ header: connect bar + daily launchers ============ -->
         <Border Grid.Row="0" Background="{StaticResource CardBg}" Padding="10,8" BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1">
-            <!-- wraps to a second line when narrow instead of clipping; device actions
+            <StackPanel>
+            <!-- row 1: connect bar. Gear stays pinned top-right; the rest wraps to a
+                 second line when narrow instead of clipping; device actions
                  stay disabled until a device is selected/connected -->
+            <DockPanel>
+                <Button x:Name="BtnDeviceSetup" DockPanel.Dock="Right" Content="⚙ Device _setup…"
+                        VerticalAlignment="Top" Margin="6,0,0,4" Click="BtnDeviceSetup_Click"
+                        ToolTip="Find, rename, update, or prepare Pis"/>
             <WrapPanel Orientation="Horizontal">
                 <TextBlock Text="Device:" VerticalAlignment="Center" Margin="0,0,6,0" FontWeight="SemiBold"/>
                 <ComboBox x:Name="CmbAddress" MinWidth="240" Margin="0,0,6,4"
@@ -49,36 +55,24 @@
                 <Button x:Name="BtnConnect" Content="_Connect" Style="{StaticResource PrimaryButton}"
                         Margin="0,0,6,4" Click="BtnConnect_Click"
                         ToolTip="Connect to the Pi picked in the box on the left"/>
-                <Button x:Name="BtnScan" Content="_Find my Pi" Margin="0,0,6,4" Click="BtnScan_Click"
-                        ToolTip="Search your WiFi network for Pis and add them to the list"/>
-                <Button x:Name="BtnRename" Content="_Rename" Margin="0,0,6,4" Click="BtnRename_Click" IsEnabled="False"
-                        ToolTip="Give the selected Pi a friendlier name"
-                        ToolTipService.ShowOnDisabled="True"/>
-                <Button x:Name="BtnForget" Content="Re_move" Margin="0,0,14,4" Click="BtnForget_Click" IsEnabled="False"
-                        ToolTip="Take the selected Pi out of your device list (pick a saved Pi first)"
-                        ToolTipService.ShowOnDisabled="True"/>
                 <Button x:Name="BtnKiosk" Content="_TV display on/off" Margin="0,0,6,4" Click="BtnKiosk_Click" IsEnabled="False"
                         ToolTip="Turn the signage on the TV on or off (connect to your Pi first)"
                         ToolTipService.ShowOnDisabled="True"/>
                 <Button x:Name="BtnRemote" Content="_Remote control" Margin="0,0,6,4" Click="BtnRemote_Click" IsEnabled="False"
                         ToolTip="See and control this Pi's screen (connect and pair first)"
                         ToolTipService.ShowOnDisabled="True"/>
-                <Button x:Name="BtnUpdatePi" Content="Update _Pi software" Margin="0,0,14,4"
-                        Click="BtnUpdatePi_Click" Visibility="Collapsed"
-                        ToolTip="This app came with newer Pi software — click to update your Pis. The TV will blink once."/>
-                <Button Content="Tournament _Signage" Margin="0,0,6,4" Click="OpenSignage_Click"
-                        ToolTip="Capture pairings/standings from your screen and run the round timer"/>
-                <Button Content="_YouTube" Margin="0,0,6,4" Click="OpenBookmarks_Click"
-                        ToolTip="Save YouTube links and play them on a TV, with sound"/>
-                <Button Content="Spo_tify" Margin="0,0,6,4" Click="OpenSpotify_Click"
-                        ToolTip="Save Spotify links and play music or podcasts on a TV"/>
-                <Button Content="Set up a _new Pi" Margin="0,0,0,4" Click="AddPi_Click"
-                        ToolTip="Connect a brand-new Pi to your WiFi using a USB cable"/>
-                <Button x:Name="BtnPrepareDelivery" Content="Prepare Pi for delivery"
-                        Margin="6,0,0,4" Click="BtnPrepareDelivery_Click" IsEnabled="False"
-                        ToolTip="Permanently erase builder access and customer data before handing over this Pi"
-                        ToolTipService.ShowOnDisabled="True"/>
             </WrapPanel>
+            </DockPanel>
+            <!-- row 2: daily launchers, a touch larger than the connect-bar buttons -->
+            <WrapPanel Margin="0,6,0,0">
+                <Button Content="Tournament _Signage" Padding="14,7" FontSize="13" Margin="0,0,6,4" Click="OpenSignage_Click"
+                        ToolTip="Capture pairings/standings from your screen and run the round timer"/>
+                <Button Content="_YouTube" Padding="14,7" FontSize="13" Margin="0,0,6,4" Click="OpenBookmarks_Click"
+                        ToolTip="Save YouTube links and play them on a TV, with sound"/>
+                <Button Content="Spo_tify" Padding="14,7" FontSize="13" Margin="0,0,6,4" Click="OpenSpotify_Click"
+                        ToolTip="Save Spotify links and play music or podcasts on a TV"/>
+            </WrapPanel>
+            </StackPanel>
         </Border>
 
         <!-- thin loading bar over the top edge of the main area while talking to the Pi -->
@@ -301,16 +295,21 @@
                 </TextBlock>
                 <TextBlock TextWrapping="Wrap" Margin="0,0,0,8">
                     <Run FontWeight="SemiBold">2.</Run>
-                    <Run>Click</Run> <Run FontWeight="SemiBold">Find my Pi</Run>
-                    <Run>above. When it appears in the list, pick it and click</Run>
+                    <Run>Click</Run> <Run FontWeight="SemiBold">Device setup</Run>
+                    <Run>at the top right, then</Run> <Run FontWeight="SemiBold">Find my Pi</Run><Run>.</Run>
+                    <Run>When it appears in the list, pick it and click</Run>
                     <Run FontWeight="SemiBold">Connect</Run><Run>.</Run>
                 </TextBlock>
                 <TextBlock TextWrapping="Wrap">
                     <Run FontWeight="SemiBold">3.</Run>
-                    <Run>Got a brand-new Pi that's never been set up? Click</Run>
+                    <Run>Got a brand-new Pi that's never been set up? It's in</Run>
+                    <Run FontWeight="SemiBold">Device setup</Run>
+                    <Run>too — click</Run>
                     <Run FontWeight="SemiBold">Set up a new Pi</Run>
                     <Run>and follow the steps.</Run>
                 </TextBlock>
+                <Button Content="Open device setup…" Style="{StaticResource PrimaryButton}"
+                        HorizontalAlignment="Left" Margin="0,14,0,0" Click="BtnDeviceSetup_Click"/>
             </StackPanel>
         </Border>
 
