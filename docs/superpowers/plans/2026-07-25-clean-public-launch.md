@@ -240,14 +240,18 @@ jobs:
         include:
           - language: csharp
             os: windows-latest
+            build-mode: autobuild
           - language: python
             os: ubuntu-latest
+            build-mode: none
     steps:
       - uses: actions/checkout@v6
       - uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
       - uses: github/codeql-action/autobuild@v4
+        if: matrix.build-mode == 'autobuild'
       - uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
@@ -942,12 +946,14 @@ if ($LASTEXITCODE -ne 0) { throw "Repository settings update failed" }
 
 - [ ] **Step 3: Enable public-repository security features**
 
+GitHub Advanced Security is automatic for public repositories, so the PATCH
+only enables secret scanning and push protection explicitly.
+
 Create `.public-launch-security.json` with:
 
 ```json
 {
   "security_and_analysis": {
-    "advanced_security": { "status": "enabled" },
     "secret_scanning": { "status": "enabled" },
     "secret_scanning_push_protection": { "status": "enabled" }
   }

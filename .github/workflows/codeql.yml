@@ -25,14 +25,18 @@ jobs:
         include:
           - language: csharp
             os: windows-latest
+            build-mode: autobuild
           - language: python
             os: ubuntu-latest
+            build-mode: none
     steps:
       - uses: actions/checkout@v6
       - uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
       - uses: github/codeql-action/autobuild@v4
+        if: matrix.build-mode == 'autobuild'
       - uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
