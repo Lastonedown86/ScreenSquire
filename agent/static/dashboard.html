@@ -75,7 +75,10 @@
       showIdle(false);
       if(src !== curSrc){ curSrc = src; $('board-img').src = src; }  // swap on new push
       const t = data.timer || {};
-      $('board-timer').classList.toggle('hidden', t.state === 'stopped' || !t.state);
+      // inside the kiosk iframe the kiosk's own corner overlay is the single
+      // timer — drawing the chip too puts two drifting clocks on the TV
+      const embedded = window.self !== window.top;
+      $('board-timer').classList.toggle('hidden', embedded || t.state === 'stopped' || !t.state);
       $('board-timer').querySelector('.lbl').textContent = t.label || '';
     } else { // timer
       const running = data && data.timer && data.timer.state !== 'stopped';
