@@ -62,6 +62,46 @@ public class OnboardingPolicyTests
     }
 
     [Fact]
+    public void Legacy_agent_reporting_no_device_id_matches_a_saved_device_by_hostname()
+    {
+        var saved = new SavedDevice {
+            DeviceId = "", Name = "TV1", Hostname = "TV1",
+            Ip = "192.168.0.58", Port = 8080
+        };
+
+        Assert.True(DeviceIdentityPolicy.IsMatch(saved, "", "tv1"));
+
+        DeviceIdentityPolicy.ApplyVerifiedEndpoint(
+            saved, "", "TV1", "192.168.0.60", 8080);
+
+        Assert.Equal("", saved.DeviceId);
+        Assert.Equal("192.168.0.60", saved.Ip);
+    }
+
+    [Fact]
+    public void Legacy_agent_reporting_no_device_id_still_needs_a_hostname_match()
+    {
+        var saved = new SavedDevice {
+            DeviceId = "", Name = "TV1", Hostname = "TV1",
+            Ip = "192.168.0.58", Port = 8080
+        };
+
+        Assert.False(DeviceIdentityPolicy.IsMatch(saved, "", "other-tv"));
+        Assert.False(DeviceIdentityPolicy.IsMatch(saved, "", ""));
+    }
+
+    [Fact]
+    public void Verified_device_rejects_an_agent_reporting_no_identity()
+    {
+        var saved = new SavedDevice {
+            DeviceId = "expected-id", Name = "Front", Hostname = "front",
+            Ip = "192.168.1.20", Port = 8080
+        };
+
+        Assert.False(DeviceIdentityPolicy.IsMatch(saved, "", "front"));
+    }
+
+    [Fact]
     public void Replacement_decline_blocks_pairing_to_a_different_controller()
     {
         var status = new PairStatus("device-id", true, "other-controller");
