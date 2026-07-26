@@ -582,16 +582,22 @@ public partial class MainWindow : Window
             var proc = RemoteViewerLauncher.Launch(viewer, _connectedHost, session);
             _ = Task.Run(async () =>
             {
-                await proc.WaitForExitAsync();
-                try { await _api.StopRemoteDesktopAsync(ctx); } catch { /* idle timeout is the backstop */ }
-                Dispatcher.Invoke(() => BtnRemote.IsEnabled = true);
+                // The finally re-enables the button on every exit, so a throw in
+                // WaitForExitAsync can't leave it permanently disabled.
+                try
+                {
+                    await proc.WaitForExitAsync();
+                    try { await _api.StopRemoteDesktopAsync(ctx); } catch { /* idle timeout is the backstop */ }
+                }
+                finally { Dispatcher.Invoke(() => BtnRemote.IsEnabled = true); }
             });
             return;
         }
         catch (Exception ex)
         {
             Toaster.Show("Couldn't start remote control: " + ex.Message, ToastKind.Error);
-            try { await _api.StopRemoteDesktopAsync(ctx); } catch { }
+            if (ctx != null)
+                try { await _api.StopRemoteDesktopAsync(ctx); } catch { }
         }
         BtnRemote.IsEnabled = true;
     }
