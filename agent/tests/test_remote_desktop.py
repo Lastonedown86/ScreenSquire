@@ -86,3 +86,37 @@ def test_start_failure_reports_stderr(agent_module, signed, monkeypatch):
     assert r.status_code == 500
     assert "no wayland display" in r.json()["detail"]
     assert agent_module._remote_proc is None
+
+
+class SpyIdleTask:
+    """Stands in for the real asyncio.Task in _remote_idle_task so the test can
+    prove .cancel() was actually called, without depending on asyncio task/loop
+    teardown timing (TestClient tears down its event loop between requests,
+    which makes a real Task look "done" whether or not it was cancelled)."""
+    def __init__(self):
+        self.cancelled = False
+
+    def cancel(self):
+        self.cancelled = True
+
+
+def test_respawn_cancels_stale_idle_task(agent_module, signed, monkeypatch):
+    # First session starts and gets an idle-timeout task.
+    _install_fake_spawn(agent_module, monkeypatch, FakeProc(returncode=None))
+    signed("POST", "/api/remote-desktop", json={"running": True})
+
+    # Swap in a spy so we can prove cancel() is actually invoked on it.
+    stale_idle_task = SpyIdleTask()
+    agent_module._remote_idle_task = stale_idle_task
+
+    # wayvnc died on its own (not via /api/remote-desktop stop).
+    agent_module._remote_proc.returncode = 1
+
+    # Respawn: the stale idle task must be cancelled, not left pending to
+    # kill the new session 15 minutes later.
+    _install_fake_spawn(agent_module, monkeypatch, FakeProc(returncode=None))
+    r = signed("POST", "/api/remote-desktop", json={"running": True}).json()
+
+    assert r["ok"] is True and r["running"] is True
+    assert stale_idle_task.cancelled is True
+    assert agent_module._remote_idle_task is not stale_idle_task

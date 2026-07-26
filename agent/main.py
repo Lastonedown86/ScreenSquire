@@ -680,6 +680,11 @@ async def set_remote_desktop(req: RemoteDesktopRequest):
         return {"ok": True, "running": False, "error": None}
     if _remote_proc is not None and _remote_proc.returncode is None:
         return {"ok": True, "running": True, "error": None, **_remote_creds}
+    # Respawn path: the previous wayvnc died on its own. Its idle-timeout task
+    # is still pending and would later stop() the *new* session early — cancel it.
+    if _remote_idle_task is not None:
+        _remote_idle_task.cancel()
+        _remote_idle_task = None
     try:
         await _ensure_rsa_key()
     except Exception as exc:
