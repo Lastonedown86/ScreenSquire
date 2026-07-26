@@ -14,7 +14,7 @@
 - The repository license is MIT.
 - The installed Windows application remains named **Pi Signage Control**.
 - Preserve useful unpublished history, but replace every author and committer email with `159793913+Lastonedown86@users.noreply.github.com`.
-- Do not publish real Wi-Fi credentials, provisioning PINs, client or store details, machine-specific user paths, recovery references, or backup artifacts.
+- Do not publish real Wi-Fi credentials, provisioning PINs, client or store details, machine-specific user paths, actual Git recovery refs, or backup artifacts. Documented recovery procedures and functional backup code are allowed.
 - Publish only `main`.
 - Nothing becomes public until local tests and the rewritten-history privacy scan pass.
 - Normal post-launch changes reach `main` through pull requests with zero required approvals.
