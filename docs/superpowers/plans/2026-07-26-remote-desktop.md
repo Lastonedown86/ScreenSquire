@@ -23,7 +23,7 @@
 
 Mirrors the existing `/api/kiosk` pattern (`agent/main.py`, tests in `agent/tests/test_kiosk.py`). The wayvnc process launch is factored behind an injectable seam so tests never spawn a real process.
 
-### Task A1: Remote-desktop lifecycle + endpoints in the agent
+### Task 1: Remote-desktop lifecycle + endpoints in the agent
 
 **Files:**
 - Modify: `agent/main.py` (add near the `/api/kiosk` block, ~line 596; bump `AGENT_VERSION`)
@@ -250,7 +250,7 @@ git add agent/main.py agent/tests/test_remote_desktop.py
 git commit -m "feat(agent): remote desktop endpoint — wayvnc on demand"
 ```
 
-### Task A2: Install-time note for wayvnc availability
+### Task 2: Install-time note for wayvnc availability
 
 **Files:**
 - Modify: `pi-setup/install.sh` (packages line, ~line 18)
@@ -278,7 +278,7 @@ git commit -m "build(pi): ensure wayvnc + ssh-keygen are installed"
 
 ## Part B — App side (independently shippable, depends on Part A's response shape)
 
-### Task B1: ApiClient remote-desktop calls
+### Task 3: ApiClient remote-desktop calls
 
 **Files:**
 - Modify: `windows-app/ApiClient.cs`; `windows-app/Models.cs`
@@ -361,7 +361,7 @@ git add windows-app/ApiClient.cs windows-app/Models.cs signage-core.Tests/ApiCli
 git commit -m "feat(app): ApiClient start/stop remote desktop"
 ```
 
-### Task B2: Viewer launcher (pure, unit-tested command construction)
+### Task 4: Viewer launcher (pure, unit-tested command construction)
 
 **Files:**
 - Create: `windows-app/RemoteViewerLauncher.cs`
@@ -444,7 +444,7 @@ git add windows-app/RemoteViewerLauncher.cs signage-core.Tests/RemoteViewerLaunc
 git commit -m "feat(app): build TigerVNC viewer launch recipe"
 ```
 
-### Task B3: Bundle vncviewer.exe
+### Task 5: Bundle vncviewer.exe
 
 **Files:**
 - Modify: `windows-app/PiSignageControl.csproj`
@@ -490,7 +490,7 @@ git add windows-app/PiSignageControl.csproj windows-app/tools/vncviewer.exe
 git commit -m "build(app): bundle TigerVNC vncviewer"
 ```
 
-### Task B4: "Remote control" button wiring
+### Task 6: "Remote control" button wiring
 
 **Files:**
 - Modify: `windows-app/MainWindow.xaml` (button beside `BtnKiosk`, ~line 60)
@@ -566,7 +566,7 @@ git add windows-app/MainWindow.xaml windows-app/MainWindow.xaml.cs
 git commit -m "feat(app): remote control button launches the viewer"
 ```
 
-### Task B5: Manual end-to-end verification
+### Task 7: Manual end-to-end verification
 
 - [ ] Connect to the paired Pi (TV1) in the app.
 - [ ] Click "Remote control"; confirm `vncviewer.exe` opens and shows the Pi's screen.
