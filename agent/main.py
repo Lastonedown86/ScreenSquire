@@ -270,7 +270,7 @@ def _normalize_url(src: str) -> str:
         return src
     # mute: Chromium only autoplays muted video without a user gesture
     return (f"https://www.youtube.com/embed/{vid}"
-            f"?autoplay=1&mute=1&controls=0&loop=1&playlist={vid}")
+            f"?autoplay=1&mute=1&controls=0&loop=1&cc_load_policy=0&playlist={vid}")
 
 
 def _item_payload(item: PlaylistItem) -> dict:

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 EMBED = ("https://www.youtube.com/embed/2B_L3WsMqTc"
-         "?autoplay=1&mute=1&controls=0&loop=1&playlist=2B_L3WsMqTc")
+         "?autoplay=1&mute=1&controls=0&loop=1&cc_load_policy=0&playlist=2B_L3WsMqTc")
 
 
 @contextmanager
