@@ -29,8 +29,9 @@ without intentionally changing its underlying upgrade identity.
   - local Windows user paths;
   - client names, store details, real Wi-Fi credentials, and real provisioning
     PINs.
-- Only the intended `main` branch is published. Recovery references and local
-  backup artifacts are never pushed.
+- Only the intended `main` branch is published. Actual Git recovery refs and
+  local backup artifacts are never pushed; documented recovery procedures and
+  legitimate functional backup code are allowed.
 
 ## Repository Documentation
 
