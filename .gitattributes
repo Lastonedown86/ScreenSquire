@@ -1,0 +1,4 @@
+# Shell scripts and agent Python must stay LF — CRLF breaks bash `set -euo
+# pipefail` on the Pi and is noise in Python diffs.
+*.sh    text eol=lf
+*.py    text eol=lf
