@@ -78,8 +78,12 @@ while true; do
   # never let a saved session/tab take over — always open the signage page
   rm -f "$PROFILE"/Default/Current\ Session "$PROFILE"/Default/Current\ Tabs \
         "$PROFILE"/Default/Last\ Session "$PROFILE"/Default/Last\ Tabs 2>/dev/null
+  # --password-store=basic: without it Chromium asks GNOME keyring to unlock,
+  # which pops "Choose a password for the new keyring" over the desktop the
+  # first time someone signs into a site (e.g. Spotify) via remote control
   "$CHROME" --kiosk "http://localhost:8080/" --user-data-dir="$PROFILE" \
     --noerrdialogs --disable-infobars --disable-session-crashed-bubble --no-first-run \
+    --password-store=basic \
     --disable-features=Translate --autoplay-policy=no-user-gesture-required \
     --check-for-update-interval=31536000 --overscroll-history-navigation=0 \
     --enable-gpu-rasterization --ignore-gpu-blocklist \

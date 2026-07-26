@@ -103,6 +103,22 @@ public class SettingsStoreTests
     }
 
     [Fact]
+    public void RemoteFingerprintsRoundTrip()
+    {
+        var path = TempFile();
+        try
+        {
+            var store = new SettingsStore(path);
+            var s = new AppSettings();
+            s.RemoteFingerprints["device-id"] = "aa-bb-cc-dd-ee-ff-00-11";
+            store.Save(s);
+            Assert.Equal("aa-bb-cc-dd-ee-ff-00-11",
+                store.Load().RemoteFingerprints["device-id"]);
+        }
+        finally { System.IO.File.Delete(path); }
+    }
+
+    [Fact]
     public void SpotifyBookmarksRoundTrip()
     {
         var path = TempFile();

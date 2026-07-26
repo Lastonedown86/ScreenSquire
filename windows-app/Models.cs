@@ -152,4 +152,6 @@ public class KioskResult
 public record RemoteDesktopSession(
     [property: JsonPropertyName("port")] int Port,
     [property: JsonPropertyName("username")] string Username,
-    [property: JsonPropertyName("password")] string Password);
+    [property: JsonPropertyName("password")] string Password,
+    // TigerVNC-format server key fingerprint; null from pre-2026.07.26.5 agents
+    [property: JsonPropertyName("fingerprint")] string? Fingerprint = null);

@@ -15,6 +15,7 @@ Run for development:
 
 import asyncio
 import base64
+import hashlib
 import ipaddress
 import io
 import json
@@ -62,7 +63,7 @@ PLAYLIST_FILE = DATA_DIR / "playlist.json"
 PORT = int(os.environ.get("SIGNAGE_PORT", "8080"))
 NAME_FILE = DATA_DIR / "name.txt"
 TRUST_FILE = DATA_DIR / "trust.json"
-AGENT_VERSION = "2026.07.26.4"  # bump on every agent change; the app compares this
+AGENT_VERSION = "2026.07.26.5"  # bump on every agent change; the app compares this
 
 
 def _load_name() -> str:
@@ -715,6 +716,47 @@ async def _ensure_rsa_key() -> None:
             raise RuntimeError(f"could not generate wayvnc key: {err.strip()}")
 
 
+def _tigervnc_fingerprint(openssl_text: str) -> Optional[str]:
+    """Fingerprint of the wayvnc RSA public key, in exactly the format the
+    TigerVNC viewer shows in its "verify server" dialog: first 8 bytes of
+    SHA-1 over (u32 key-bits BE || modulus || exponent padded to modulus
+    size), lowercase hex, dash-separated. Input is the output of
+    `openssl rsa -in key -noout -modulus -text`."""
+    mod_hex = None
+    exponent = None
+    for line in openssl_text.splitlines():
+        line = line.strip()
+        if line.startswith("Modulus="):
+            mod_hex = line.split("=", 1)[1].strip()
+        elif line.startswith("publicExponent:"):
+            try:
+                exponent = int(line.split()[1])
+            except (IndexError, ValueError):
+                return None
+    if not mod_hex or exponent is None:
+        return None
+    try:
+        if len(mod_hex) % 2:
+            mod_hex = "0" + mod_hex
+        n = bytes.fromhex(mod_hex)
+        e = exponent.to_bytes(len(n), "big")
+    except (ValueError, OverflowError):
+        return None
+    digest = hashlib.sha1((len(n) * 8).to_bytes(4, "big") + n + e).digest()
+    return "-".join(f"{b:02x}" for b in digest[:8])
+
+
+async def _wayvnc_fingerprint() -> Optional[str]:
+    try:
+        rc, out, _ = await _run(
+            ["openssl", "rsa", "-in", str(_RSA_KEY_FILE), "-noout", "-modulus", "-text"])
+    except Exception:
+        return None  # fingerprint is best-effort; the session still works
+    if rc != 0:
+        return None
+    return _tigervnc_fingerprint(out)
+
+
 def _write_wayvnc_config(username: str, password: str) -> None:
     content = (
         "enable_auth=true\n"
@@ -799,7 +841,14 @@ async def set_remote_desktop(req: RemoteDesktopRequest):
         err = (await _remote_proc.stderr.read()).decode("utf-8", "replace")[:200]
         await _stop_wayvnc()
         raise HTTPException(500, f"wayvnc failed to start: {err.strip()}")
-    _remote_creds = {"port": WAYVNC_PORT, "username": username, "password": password}
+    _remote_creds = {
+        "port": WAYVNC_PORT,
+        "username": username,
+        "password": password,
+        # arrives over the HMAC-authenticated channel, so the app can show the
+        # expected value next to TigerVNC's trust-on-first-use prompt
+        "fingerprint": await _wayvnc_fingerprint(),
+    }
     _remote_idle_task = asyncio.create_task(_idle_stop_after(WAYVNC_IDLE_SECONDS))
     return {"ok": True, "running": True, "error": None, **_remote_creds}
 

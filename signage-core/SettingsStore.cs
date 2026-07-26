@@ -40,6 +40,9 @@ public sealed class AppSettings
     public List<SpotifyBookmark> SpotifyBookmarks { get; set; } = new();
     // Last volume set from the bookmarks window; sent with each play.
     public int YouTubeVolume { get; set; } = 100;
+    // Remote-control server key fingerprints we've accepted, per device id.
+    // Mirrors the viewer's trust-on-first-use: silent when unchanged, loud when not.
+    public Dictionary<string, string> RemoteFingerprints { get; set; } = new();
 }
 
 public sealed class SpotifyBookmark
