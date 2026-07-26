@@ -176,7 +176,8 @@ public partial class MainWindow : Window
             BtnKiosk.IsEnabled = true;   // device actions target this Pi
             // ponytail: ControlContext has no legacy/unsigned variant in this codebase —
             // TryControlContext only ever returns non-null for a paired, signed credential.
-            BtnRemote.IsEnabled = _connectedControlContext is not null;
+            BtnRemote.IsEnabled = _connectedControlContext is not null &&
+                                  !_connectedControlContext.IsLegacyUnsigned;
             await ReloadMediaAsync();
             await ReloadPlaylistAsync();
             await RefreshStatusAsync();
@@ -1211,7 +1212,7 @@ public partial class MainWindow : Window
     private PiSignage.Signage.ControlContext? TryControlContext(string deviceId)
     {
         if (string.IsNullOrWhiteSpace(deviceId))
-            return null;
+            return PiSignage.Signage.ControlContext.LegacyUnsigned();
         var credential = _credentialVault.TryGet(deviceId);
         if (credential is null)
             return null;

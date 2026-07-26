@@ -38,10 +38,16 @@ public sealed class ProvisioningSecurityTests
         Assert.NotNull(remoteButtonLine);
         Assert.Contains("IsEnabled=\"False\"", remoteButtonLine, StringComparison.Ordinal);
 
-        // Pin the runtime gate itself, not just the static default: if a future
-        // change enables BtnRemote unconditionally (paired or not), this must fail.
+        // Pin the runtime gate itself, not just the static default: it must
+        // require a non-null control context AND exclude legacy-unsigned
+        // devices. If a future change enables BtnRemote unconditionally, or
+        // drops the legacy-unsigned exclusion, this must fail.
         Assert.Contains(
             "BtnRemote.IsEnabled = _connectedControlContext is not null",
+            codeBehind,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "!_connectedControlContext.IsLegacyUnsigned",
             codeBehind,
             StringComparison.Ordinal);
         Assert.DoesNotContain("VncLauncher", codeBehind, StringComparison.Ordinal);
