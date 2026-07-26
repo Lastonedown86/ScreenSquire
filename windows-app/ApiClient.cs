@@ -191,6 +191,21 @@ public class ApiClient : IDisposable
         return r?.Ok ?? false;
     }
 
+    public async Task<RemoteDesktopSession?> StartRemoteDesktopAsync(ControlContext context)
+    {
+        var body = JsonSerializer.SerializeToUtf8Bytes(new { running = true }, JsonOpts);
+        using var resp = await SendJsonAsync(HttpMethod.Post, "/api/remote-desktop", body, context);
+        await ThrowIfError(resp);
+        return await resp.Content.ReadFromJsonAsync<RemoteDesktopSession>();
+    }
+
+    public async Task StopRemoteDesktopAsync(ControlContext context)
+    {
+        var body = JsonSerializer.SerializeToUtf8Bytes(new { running = false }, JsonOpts);
+        using var resp = await SendJsonAsync(HttpMethod.Post, "/api/remote-desktop", body, context);
+        await ThrowIfError(resp);
+    }
+
     async Task<HttpResponseMessage> SendJsonAsync(
         HttpMethod method,
         string pathAndQuery,
