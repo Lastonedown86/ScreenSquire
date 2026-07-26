@@ -6,3 +6,5 @@ agent/data/
 *.user
 .superpowers/
 .worktrees/
+
+windows-app/tools/vncviewer.exe
