@@ -37,6 +37,13 @@ public sealed class ProvisioningSecurityTests
             .SingleOrDefault(line => line.Contains("x:Name=\"BtnRemote\"", StringComparison.Ordinal));
         Assert.NotNull(remoteButtonLine);
         Assert.Contains("IsEnabled=\"False\"", remoteButtonLine, StringComparison.Ordinal);
+
+        // Pin the runtime gate itself, not just the static default: if a future
+        // change enables BtnRemote unconditionally (paired or not), this must fail.
+        Assert.Contains(
+            "BtnRemote.IsEnabled = _connectedControlContext is not null",
+            codeBehind,
+            StringComparison.Ordinal);
         Assert.DoesNotContain("VncLauncher", codeBehind, StringComparison.Ordinal);
     }
 
