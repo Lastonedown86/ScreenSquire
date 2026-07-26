@@ -1,3 +1,4 @@
+using System.Linq;
 using PiSignage.Control;
 
 namespace signage_core.Tests;
@@ -5,7 +6,7 @@ namespace signage_core.Tests;
 public sealed class ProvisioningSecurityTests
 {
     [Fact]
-    public void Production_provisioning_disables_vnc_and_wpf_exposes_no_vnc_launcher()
+    public void Production_provisioning_disables_vnc_and_wpf_gates_remote_control_behind_pairing()
     {
         var root = RepositoryRoot();
         var provisioning = File.ReadAllText(
@@ -27,7 +28,15 @@ public sealed class ProvisioningSecurityTests
             StringComparison.Ordinal);
         Assert.DoesNotContain("do_vnc 0", provisioning, StringComparison.Ordinal);
         Assert.DoesNotContain("wayvnc", provisioning, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("BtnRemote", xaml, StringComparison.Ordinal);
+
+        // Task 6 wires the remote-control button into the UI; the invariant that
+        // still matters here is that it ships disabled and only the paired,
+        // signed connect path (verified in MainWindow.xaml.cs) turns it on.
+        var remoteButtonLine = xaml
+            .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+            .SingleOrDefault(line => line.Contains("x:Name=\"BtnRemote\"", StringComparison.Ordinal));
+        Assert.NotNull(remoteButtonLine);
+        Assert.Contains("IsEnabled=\"False\"", remoteButtonLine, StringComparison.Ordinal);
         Assert.DoesNotContain("VncLauncher", codeBehind, StringComparison.Ordinal);
     }
 

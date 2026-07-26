@@ -174,6 +174,9 @@ public partial class MainWindow : Window
             GettingStarted.Visibility = Visibility.Collapsed;
             _connectedHost = host;
             BtnKiosk.IsEnabled = true;   // device actions target this Pi
+            // ponytail: ControlContext has no legacy/unsigned variant in this codebase —
+            // TryControlContext only ever returns non-null for a paired, signed credential.
+            BtnRemote.IsEnabled = _connectedControlContext is not null;
             await ReloadMediaAsync();
             await ReloadPlaylistAsync();
             await RefreshStatusAsync();
@@ -194,6 +197,7 @@ public partial class MainWindow : Window
             _connectedHost = null;
             _connectedControlContext = null;
             BtnKiosk.IsEnabled = false;
+            BtnRemote.IsEnabled = false;
             BtnKiosk.Content = "_TV display on/off";
             LblStatus.Text = "Not connected — follow the steps above";
             return null;
@@ -453,6 +457,7 @@ public partial class MainWindow : Window
             MainArea.IsEnabled = false;
             GettingStarted.Visibility = Visibility.Visible;
             BtnKiosk.IsEnabled = false;
+            BtnRemote.IsEnabled = false;
             BtnKiosk.Content = "_TV display on/off";
             LblStatus.Text = "Ready for delivery — unplug the USB cable.";
             try
@@ -548,6 +553,38 @@ public partial class MainWindow : Window
         {
             Toaster.Show("Couldn't switch the TV display: " + ex.Message, ToastKind.Error);
         }
+    }
+
+    // Launch the bundled remote viewer against a paired connection.
+    private async void BtnRemote_Click(object sender, RoutedEventArgs e)
+    {
+        if (_api == null || _connectedHost == null) return;
+        var viewer = RemoteViewerLauncher.BundledViewerPath();
+        if (!System.IO.File.Exists(viewer))
+        {
+            Toaster.Show("Remote viewer is missing from this install.", ToastKind.Error);
+            return;
+        }
+        BtnRemote.IsEnabled = false;
+        var ctx = ConnectedControlContext();
+        try
+        {
+            var session = await _api.StartRemoteDesktopAsync(ctx);
+            if (session == null) { Toaster.Show("The Pi did not start remote control.", ToastKind.Error); return; }
+            Toaster.Show("Opening remote control — the viewer window will appear.", ToastKind.Success);
+            var proc = RemoteViewerLauncher.Launch(viewer, _connectedHost, session);
+            _ = Task.Run(async () =>
+            {
+                await proc.WaitForExitAsync();
+                try { await _api.StopRemoteDesktopAsync(ctx); } catch { /* idle timeout is the backstop */ }
+            });
+        }
+        catch (Exception ex)
+        {
+            Toaster.Show("Couldn't start remote control: " + ex.Message, ToastKind.Error);
+            try { await _api.StopRemoteDesktopAsync(ctx); } catch { }
+        }
+        finally { BtnRemote.IsEnabled = true; }
     }
 
     // Push the agent software bundled inside this exe to every saved, reachable,
