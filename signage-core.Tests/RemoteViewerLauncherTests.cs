@@ -16,4 +16,10 @@ public class RemoteViewerLauncherTests
         Assert.Equal("user1", env["VNC_USERNAME"]);
         Assert.Equal("pass1", env["VNC_PASSWORD"]);
     }
+
+    [Fact]
+    public void BundledViewerPath_is_next_to_the_app()
+    {
+        Assert.EndsWith("vncviewer.exe", RemoteViewerLauncher.BundledViewerPath());
+    }
 }

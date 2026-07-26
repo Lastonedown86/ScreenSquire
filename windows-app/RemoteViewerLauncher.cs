@@ -24,4 +24,7 @@ public static class RemoteViewerLauncher
         foreach (var (k, v) in env) psi.Environment[k] = v;
         return Process.Start(psi)!;
     }
+
+    public static string BundledViewerPath() =>
+        System.IO.Path.Combine(System.AppContext.BaseDirectory, "vncviewer.exe");
 }

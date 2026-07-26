@@ -23,4 +23,8 @@
     <EmbeddedResource Include="..\agent\static\**\*" LogicalName="agent/static/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="tools\vncviewer.exe" CopyToOutputDirectory="PreserveNewest" Condition="Exists('tools\vncviewer.exe')" />
+  </ItemGroup>
+
 </Project>
