@@ -10,7 +10,19 @@ public sealed record ControlContext(
     string ControllerId,
     byte[] Secret,
     Func<long> TakeNextCounter,
-    string? CredentialVaultPath = null);
+    string? CredentialVaultPath = null)
+{
+    public bool IsLegacyUnsigned { get; private init; }
+
+    /// <summary>
+    /// Deliberately unsigned control for agents older than 2026.07.25.1, which
+    /// have no stable identity and verify no signatures. Only ever hand this to
+    /// a device that has never had a verified DeviceId; verified devices must
+    /// always use a paired, signing context.
+    /// </summary>
+    public static ControlContext LegacyUnsigned() =>
+        new("", "", Array.Empty<byte>(), static () => 0) { IsLegacyUnsigned = true };
+}
 
 public static class ControlSendLock
 {
@@ -72,6 +84,12 @@ public static class SignedControlRequest
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(entityBytes);
+        if (context.IsLegacyUnsigned)
+        {
+            // pre-identity agent: nothing to sign with, nothing verifies
+            return await http.SendAsync(request, cancellationToken)
+                .ConfigureAwait(false);
+        }
         ArgumentException.ThrowIfNullOrWhiteSpace(context.DeviceId);
         ArgumentNullException.ThrowIfNull(context.TakeNextCounter);
 

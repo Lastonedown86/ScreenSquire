@@ -29,6 +29,26 @@ public class ApiClientTests
     }
 
     [Fact]
+    public async Task Legacy_unsigned_context_sends_mutations_without_auth_headers()
+    {
+        var handler = new RecordingHandler();
+        using var client = new ApiClient("pi", 8080, handler);
+        var context = ControlContext.LegacyUnsigned();
+
+        await client.NextAsync(context);
+        await client.SetNameAsync("Front TV", context);
+
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.All(
+            handler.Requests,
+            request => Assert.DoesNotContain(
+                request.Headers,
+                header => header.Key.StartsWith(
+                    "X-PiSignage-",
+                    StringComparison.OrdinalIgnoreCase)));
+    }
+
+    [Fact]
     public async Task Every_mutation_family_signs_the_exact_transmitted_entity()
     {
         var handler = new RecordingHandler();
