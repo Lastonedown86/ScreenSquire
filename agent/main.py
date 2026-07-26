@@ -34,6 +34,7 @@ import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal, Optional
+from urllib.parse import parse_qs, urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
@@ -60,7 +61,7 @@ PLAYLIST_FILE = DATA_DIR / "playlist.json"
 PORT = int(os.environ.get("SIGNAGE_PORT", "8080"))
 NAME_FILE = DATA_DIR / "name.txt"
 TRUST_FILE = DATA_DIR / "trust.json"
-AGENT_VERSION = "2026.07.25.7"  # bump on every agent change; the app compares this
+AGENT_VERSION = "2026.07.25.8"  # bump on every agent change; the app compares this
 
 
 def _load_name() -> str:
@@ -83,6 +84,31 @@ ALLOWED_UPLOAD_EXT = {
     ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp",   # images
     ".mp4", ".webm", ".mov", ".mkv",                     # video
 }
+
+
+def _plain_media_name(name: str) -> str:
+    """Return one media-directory filename, rejecting paths and special names."""
+    if (
+        not name
+        or name in (".", "..")
+        or len(name) > 255
+        or "/" in name
+        or "\\" in name
+        or "\0" in name
+        or Path(name).name != name
+    ):
+        raise HTTPException(400, "Invalid media name")
+    return name
+
+
+def _media_path(name: str) -> Path:
+    safe_name = _plain_media_name(name)
+    root = os.path.realpath(MEDIA_DIR)
+    candidate = os.path.realpath(os.path.join(root, safe_name))
+    if not candidate.startswith(root + os.sep) or os.path.dirname(candidate) != root:
+        raise HTTPException(400, "Invalid media name")
+    return Path(candidate)
+
 
 # ---------------------------------------------------------------- models
 ItemType = Literal["image", "video", "url"]
@@ -172,15 +198,43 @@ hub = Hub()
 # ---------------------------------------------------------------- scheduler
 # YouTube watch/short links refuse to load inside an iframe (X-Frame-Options),
 # so the kiosk shows black. Rewrite them to the embed player, which allows it.
-_YT_RE = re.compile(
-    r"(?:youtube\.com/(?:watch\?(?:[^#]*&)?v=|shorts/|live/)|youtu\.be/)([\w-]{11})")
+_YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com"}
+_YOUTUBE_ID_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+)
+_MAX_NORMALIZED_URL_LENGTH = 4096
+
+
+def _youtube_id(value: str) -> Optional[str]:
+    if len(value) == 11 and all(char in _YOUTUBE_ID_CHARS for char in value):
+        return value
+    return None
 
 
 def _normalize_url(src: str) -> str:
-    m = _YT_RE.search(src)
-    if not m:
+    if len(src) > _MAX_NORMALIZED_URL_LENGTH:
         return src
-    vid = m.group(1)
+    try:
+        parsed = urlparse(src)
+    except ValueError:
+        return src
+    if parsed.scheme not in ("http", "https"):
+        return src
+
+    host = (parsed.hostname or "").lower()
+    vid = None
+    if host == "youtu.be":
+        vid = _youtube_id(parsed.path.removeprefix("/").split("/", 1)[0])
+    elif host in _YOUTUBE_HOSTS:
+        parts = parsed.path.strip("/").split("/")
+        if parsed.path == "/watch":
+            candidates = parse_qs(parsed.query).get("v", [])
+            if len(candidates) == 1:
+                vid = _youtube_id(candidates[0])
+        elif len(parts) == 2 and parts[0] in ("shorts", "live"):
+            vid = _youtube_id(parts[1])
+    if vid is None:
+        return src
     # mute: Chromium only autoplays muted video without a user gesture
     return (f"https://www.youtube.com/embed/{vid}"
             f"?autoplay=1&mute=1&controls=0&loop=1&playlist={vid}")
@@ -843,9 +897,7 @@ async def put_playlist(playlist: Playlist):
     # validate media references exist before accepting
     for item in playlist.items:
         if item.type in ("image", "video"):
-            if "/" in item.source or "\\" in item.source or ".." in item.source:
-                raise HTTPException(400, f"Invalid media name: {item.source}")
-            if not (MEDIA_DIR / item.source).exists():
+            if not _media_path(item.source).is_file():
                 raise HTTPException(400, f"Media file not found: {item.source}")
     state.playlist = playlist
     state.index = 0
@@ -861,15 +913,15 @@ async def upload_media(
     control: VerifiedControl = Depends(require_control_mutation),
 ):
     await verify_uploaded_entity(file, control.entity_sha256)
+    name = _plain_media_name(name)
     accept_uploaded_counter(control, trust_store)
-    name = Path(name).name  # strip any path components from the signed query
     ext = Path(name).suffix.lower()
     if ext not in ALLOWED_UPLOAD_EXT:
         raise HTTPException(400, f"Unsupported file type: {ext}")
     # a full SD card kills the whole Pi — refuse uploads before that happens
     if shutil.disk_usage(MEDIA_DIR).free < 500 * 1024 * 1024:
         raise HTTPException(507, "Pi is low on disk space — delete media first")
-    dest = MEDIA_DIR / name
+    dest = _media_path(name)
     tmp = dest.with_suffix(dest.suffix + ".part")
     with tmp.open("wb") as out:
         while chunk := await file.read(1024 * 1024):
@@ -895,9 +947,9 @@ async def list_media():
 
 @app.delete("/api/media/{name}", dependencies=[Depends(require_control_mutation)])
 async def delete_media(name: str):
-    safe = Path(name).name
-    target = MEDIA_DIR / safe
-    if not target.exists():
+    safe = _plain_media_name(name)
+    target = _media_path(safe)
+    if not target.is_file():
         raise HTTPException(404, "Not found")
     in_use = any(i.source == safe for i in state.playlist.items)
     if in_use:
@@ -913,7 +965,7 @@ async def delete_media(name: str):
 async def detach_media(name: str):
     """Stop displaying a file: pull it out of the playlist and off any
     dashboard board, so it can then be deleted or replaced."""
-    safe = Path(name).name
+    safe = _plain_media_name(name)
     removed = 0
     kept = [i for i in state.playlist.items if i.source != safe]
     removed = len(state.playlist.items) - len(kept)
@@ -939,9 +991,9 @@ class RenameMediaRequest(BaseModel):
 
 @app.post("/api/media/{name}/rename", dependencies=[Depends(require_control_mutation)])
 async def rename_media(name: str, req: RenameMediaRequest):
-    safe = Path(name).name
-    src = MEDIA_DIR / safe
-    if not src.exists():
+    safe = _plain_media_name(name)
+    src = _media_path(safe)
+    if not src.is_file():
         raise HTTPException(404, "Not found")
     base = req.new_name.strip()
     if not base or len(base) > 100 or "/" in base or "\\" in base or ".." in base:
@@ -949,7 +1001,7 @@ async def rename_media(name: str, req: RenameMediaRequest):
     new_full = base + src.suffix.lower()
     if new_full == safe:
         return {"ok": True, "name": safe}
-    dest = MEDIA_DIR / new_full
+    dest = _media_path(new_full)
     if dest.exists():
         raise HTTPException(409, "A file with that name already exists")
     src.rename(dest)
@@ -975,8 +1027,9 @@ async def rename_media(name: str, req: RenameMediaRequest):
 
 @app.post("/api/show-now", dependencies=[Depends(require_control_mutation)])
 async def show_now(req: ShowNowRequest):
-    if req.type in ("image", "video") and not (MEDIA_DIR / Path(req.source).name).exists():
-        raise HTTPException(400, f"Media file not found: {req.source}")
+    if req.type in ("image", "video"):
+        if not _media_path(req.source).is_file():
+            raise HTTPException(400, f"Media file not found: {req.source}")
     state.override = req
     if req.duration:
         state.override_until = asyncio.get_event_loop().time() + req.duration
