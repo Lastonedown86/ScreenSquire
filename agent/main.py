@@ -61,7 +61,7 @@ PLAYLIST_FILE = DATA_DIR / "playlist.json"
 PORT = int(os.environ.get("SIGNAGE_PORT", "8080"))
 NAME_FILE = DATA_DIR / "name.txt"
 TRUST_FILE = DATA_DIR / "trust.json"
-AGENT_VERSION = "2026.07.26.1"  # bump on every agent change; the app compares this
+AGENT_VERSION = "2026.07.26.2"  # bump on every agent change; the app compares this
 
 
 def _load_name() -> str:
@@ -295,6 +295,7 @@ async def lifespan(app: FastAPI):
             zc.close()
         except Exception:
             pass
+    await _stop_wayvnc()
 
 
 app = FastAPI(title="Pi Signage Agent", version="0.1.0", lifespan=lifespan)
@@ -620,12 +621,17 @@ async def _ensure_rsa_key() -> None:
 
 
 def _write_wayvnc_config(username: str, password: str) -> None:
-    _WAYVNC_CONFIG.write_text(
+    content = (
         "enable_auth=true\n"
         f"username={username}\n"
         f"password={password}\n"
         f"rsa_private_key_file={_RSA_KEY_FILE}\n")
-    os.chmod(_WAYVNC_CONFIG, 0o600)
+    fd = os.open(_WAYVNC_CONFIG, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, content.encode())
+    finally:
+        os.close(fd)
+    os.chmod(_WAYVNC_CONFIG, 0o600)  # ensure 0600 even if the file pre-existed with looser mode
 
 
 async def _spawn_wayvnc(config_path: str):

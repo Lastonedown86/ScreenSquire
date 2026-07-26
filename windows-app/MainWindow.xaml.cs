@@ -566,25 +566,33 @@ public partial class MainWindow : Window
             return;
         }
         BtnRemote.IsEnabled = false;
-        var ctx = ConnectedControlContext();
+        PiSignage.Signage.ControlContext? ctx = null;
         try
         {
+            ctx = ConnectedControlContext();
             var session = await _api.StartRemoteDesktopAsync(ctx);
-            if (session == null) { Toaster.Show("The Pi did not start remote control.", ToastKind.Error); return; }
+            if (session == null)
+            {
+                Toaster.Show("The Pi did not start remote control.", ToastKind.Error);
+                BtnRemote.IsEnabled = true;
+                return;
+            }
             Toaster.Show("Opening remote control — the viewer window will appear.", ToastKind.Success);
             var proc = RemoteViewerLauncher.Launch(viewer, _connectedHost, session);
             _ = Task.Run(async () =>
             {
                 await proc.WaitForExitAsync();
                 try { await _api.StopRemoteDesktopAsync(ctx); } catch { /* idle timeout is the backstop */ }
+                Dispatcher.Invoke(() => BtnRemote.IsEnabled = true);
             });
+            return;
         }
         catch (Exception ex)
         {
             Toaster.Show("Couldn't start remote control: " + ex.Message, ToastKind.Error);
             try { await _api.StopRemoteDesktopAsync(ctx); } catch { }
         }
-        finally { BtnRemote.IsEnabled = true; }
+        BtnRemote.IsEnabled = true;
     }
 
     // Push the agent software bundled inside this exe to every saved, reachable,
