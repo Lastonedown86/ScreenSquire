@@ -13,7 +13,14 @@
   }
   .layer.visible { opacity: 1; }
   .layer img, .layer video { width: 100%; height: 100%; object-fit: contain; }
-  .layer iframe { width: 100%; height: 100%; border: 0; }
+  /* direct children only: the Spotify card sits in a sized .sp-wrap instead */
+  .layer > iframe { width: 100%; height: 100%; border: 0; }
+
+  /* Spotify embeds are cards, not fullscreen video — center at a sane size
+     (the layer's flex centering does the positioning) */
+  .sp-wrap { width: min(90vw, 800px); height: 352px; }
+  .sp-wrap.tall { height: min(652px, 80vh); }
+  .sp-wrap iframe { width: 100%; height: 100%; border: 0; }
 
   /* idle card — shown only when there is no playlist yet */
   #idle { color: #3a3a3a; font: 500 3.5vmin/1.5 system-ui, sans-serif;
@@ -54,6 +61,8 @@
   <!-- YouTube IFrame Player API — if it never loads (offline boot, blocked),
        ytReady stays false and youtube items fall back to a muted embed -->
   <script src="https://www.youtube.com/iframe_api" async></script>
+  <!-- Spotify Embed iFrame API — same deal: no API, plain embed fallback -->
+  <script src="https://open.spotify.com/embed/iframe-api/v1" async></script>
   <div class="layer" id="idle"><div id="idleInner"><div class="dot"></div><div id="idleText">Ready — waiting for content</div></div></div>
   <div class="layer" id="a"></div>
   <div class="layer" id="b"></div>
@@ -89,11 +98,28 @@
     }
   }
 
+  // ---- Spotify Embed iFrame API state ----
+  let spApi = null;
+  window.onSpotifyIframeApiReady = (api) => { spApi = api; };
+  let sp = null;            // {controller, layer, uri, lastPosSec, sentEnded}
+
+  function sendSpState(state, uri) {
+    if (ws && ws.readyState === 1)
+      ws.send(JSON.stringify({ type: 'sp-state', state: state, uri: uri }));
+  }
+
+  function destroySpIn(layer) {
+    if (sp && sp.layer === layer) {
+      try { if (sp.controller) sp.controller.destroy(); } catch (e) {}
+      sp = null;
+    }
+  }
+
   function show(msg) {
     if (msg.type === 'idle') {
       if (msg.name) document.getElementById('idleText').textContent =
         msg.name + ' — ready, waiting for content';
-      layers.forEach(l => { destroyYtIn(l); l.classList.remove('visible'); l.innerHTML = ''; });
+      layers.forEach(l => { destroyYtIn(l); destroySpIn(l); l.classList.remove('visible'); l.innerHTML = ''; });
       idle.classList.add('visible');
       currentId = null;
       return;
@@ -104,6 +130,7 @@
 
     const back = layers[1 - front];
     destroyYtIn(back);
+    destroySpIn(back);
     back.innerHTML = '';
     let el;
     if (msg.type === 'youtube' && ytReady && window.YT && YT.Player) {
@@ -130,6 +157,54 @@
         },
       })};
       setTimeout(() => swap(back), 4000);  // same safety net as the url path
+      return;
+    }
+    if (msg.type === 'spotify') {
+      const seg = msg.uri.split(':');           // spotify:{type}:{id}, agent-validated
+      const spType = seg[1], spId = seg[2];
+      const wrap = document.createElement('div');
+      wrap.className = 'sp-wrap'
+        + (spType === 'track' || spType === 'episode' ? '' : ' tall');
+      back.appendChild(wrap);
+      if (spApi) {
+        const div = document.createElement('div');
+        wrap.appendChild(div);                  // the API replaces this div
+        const rec = { controller: null, layer: back, uri: msg.uri, lastPosSec: 0, sentEnded: false };
+        sp = rec;
+        let lastSent = null;
+        spApi.createController(div,
+          { uri: msg.uri, width: '100%', height: '100%' },
+          (controller) => {
+            rec.controller = controller;
+            controller.addListener('ready', () => {
+              try { controller.play(); } catch (e) {}
+              swap(back);
+            });
+            controller.addListener('playback_update', (e) => {
+              const d = (e && e.data) || {};
+              rec.lastPosSec = (d.position || 0) / 1000;
+              let s = d.isPaused ? 'paused' : 'playing';
+              // ponytail: no real ended event — paused within 2 s of the end
+              // counts as ended (backstop self-heals a false positive)
+              if (d.isPaused && d.duration > 0 && d.position >= d.duration - 2000)
+                s = 'ended';
+              if (s === 'ended') {
+                if (rec.sentEnded) return;
+                rec.sentEnded = true;
+              }
+              if (s !== lastSent) { lastSent = s; sendSpState(s, msg.uri); }
+            });
+          });
+      } else {
+        // API not loaded — plain embed card, no state reporting or control
+        const fe = document.createElement('iframe');
+        fe.src = 'https://open.spotify.com/embed/' + spType + '/' + spId;
+        fe.sandbox = 'allow-scripts allow-same-origin allow-forms allow-presentation';
+        fe.allow = 'autoplay; encrypted-media; fullscreen; picture-in-picture';
+        fe.onload = () => swap(back);
+        wrap.appendChild(fe);
+      }
+      setTimeout(() => swap(back), 4000);       // same safety net as the url path
       return;
     }
     if (msg.type === 'image') {
@@ -170,7 +245,7 @@
     // free the old media after the fade so videos stop downloading/decoding
     // (and kill any YouTube player left there, or its audio keeps going)
     setTimeout(() => {
-      if (!old.classList.contains('visible')) { destroyYtIn(old); old.innerHTML = ''; }
+      if (!old.classList.contains('visible')) { destroyYtIn(old); destroySpIn(old); old.innerHTML = ''; }
     }, 600);
   }
 
@@ -188,6 +263,16 @@
           else if (m.action === 'play') { p.unMute(); p.playVideo(); }
           else if (m.action === 'volume') p.setVolume(ytVolume);
           else if (m.action === 'seek') p.seekTo(p.getCurrentTime() + m.value, true);
+        } catch (err) {}
+        return;
+      }
+      if (m.type === 'sp-control') {
+        const c = sp && sp.controller;
+        if (!c) return;
+        try {
+          if (m.action === 'pause') c.pause();
+          else if (m.action === 'play') c.resume();  // play() restarts from 0
+          else if (m.action === 'seek') c.seek(Math.max(0, sp.lastPosSec + m.value));
         } catch (err) {}
         return;
       }

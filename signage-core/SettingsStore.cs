@@ -36,8 +36,21 @@ public sealed class AppSettings
     public List<string> Boards { get; set; } = new() { "pairings", "standings" };
     // Saved YouTube links for the bookmarks window; queue plays in list order.
     public List<YouTubeBookmark> YouTubeBookmarks { get; set; } = new();
+    // Saved Spotify links for the Spotify window (no queue — playlists are the queue).
+    public List<SpotifyBookmark> SpotifyBookmarks { get; set; } = new();
     // Last volume set from the bookmarks window; sent with each play.
     public int YouTubeVolume { get; set; } = 100;
+}
+
+public sealed class SpotifyBookmark
+{
+    // track | album | playlist | episode | show | artist
+    public string Type { get; set; } = "";
+    public string Id { get; set; } = "";
+    public string Url { get; set; } = "";
+    // Fetched via oEmbed at add time; null when the fetch failed (offline etc.)
+    public string? Title { get; set; }
+    public string? ThumbnailUrl { get; set; }
 }
 
 public sealed class YouTubeBookmark

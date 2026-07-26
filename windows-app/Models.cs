@@ -18,6 +18,7 @@ public class StatusInfo
     [JsonPropertyName("now_showing")] public NowShowing? NowShowing { get; set; }
     [JsonPropertyName("agent_version")] public string? AgentVersion { get; set; }
     [JsonPropertyName("youtube_state")] public YouTubeState? YouTubeState { get; set; }
+    [JsonPropertyName("spotify_state")] public SpotifyState? SpotifyState { get; set; }
 }
 
 // Last player state a kiosk reported: playing | paused | ended | error.
@@ -25,6 +26,13 @@ public class YouTubeState
 {
     [JsonPropertyName("state")] public string? State { get; set; }
     [JsonPropertyName("videoId")] public string? VideoId { get; set; }
+}
+
+// Last Spotify embed state a kiosk reported: playing | paused | ended.
+public class SpotifyState
+{
+    [JsonPropertyName("state")] public string? State { get; set; }
+    [JsonPropertyName("uri")] public string? Uri { get; set; }
 }
 
 public class NowShowing

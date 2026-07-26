@@ -62,7 +62,7 @@ PLAYLIST_FILE = DATA_DIR / "playlist.json"
 PORT = int(os.environ.get("SIGNAGE_PORT", "8080"))
 NAME_FILE = DATA_DIR / "name.txt"
 TRUST_FILE = DATA_DIR / "trust.json"
-AGENT_VERSION = "2026.07.26.3"  # bump on every agent change; the app compares this
+AGENT_VERSION = "2026.07.26.4"  # bump on every agent change; the app compares this
 
 
 def _load_name() -> str:
@@ -114,7 +114,9 @@ def _media_path(name: str) -> Path:
 # ---------------------------------------------------------------- models
 # "youtube": source is a bare 11-char video id, rendered by the kiosk with the
 # YouTube IFrame Player API (sound on, controllable) instead of a muted embed.
-ItemType = Literal["image", "video", "url", "youtube"]
+# "spotify": source is a spotify:{type}:{id} URI, rendered with the Spotify
+# Embed iFrame API (play/pause/seek; the Embed API has no volume control).
+ItemType = Literal["image", "video", "url", "youtube", "spotify"]
 
 
 class PlaylistItem(BaseModel):
@@ -223,6 +225,24 @@ def _youtube_id(value: str) -> Optional[str]:
     return None
 
 
+_SPOTIFY_TYPES = {"track", "album", "playlist", "episode", "show", "artist"}
+
+
+def _spotify_uri(value: str) -> Optional[str]:
+    """Validate a canonical spotify:{type}:{id} URI (22 base62 chars)."""
+    parts = value.split(":")
+    if (
+        len(parts) == 3
+        and parts[0] == "spotify"
+        and parts[1] in _SPOTIFY_TYPES
+        and len(parts[2]) == 22
+        and parts[2].isascii()
+        and parts[2].isalnum()
+    ):
+        return value
+    return None
+
+
 def _normalize_url(src: str) -> str:
     if len(src) > _MAX_NORMALIZED_URL_LENGTH:
         return src
@@ -255,6 +275,8 @@ def _normalize_url(src: str) -> str:
 def _item_payload(item: PlaylistItem) -> dict:
     if item.type == "youtube":
         return {"type": "youtube", "videoId": item.source, "id": item.id}
+    if item.type == "spotify":
+        return {"type": "spotify", "uri": item.source, "id": item.id}
     if item.type == "url":
         return {"type": "url", "src": _normalize_url(item.source), "id": item.id}
     return {"type": item.type, "src": f"/media/{item.source}", "id": item.id}
@@ -973,6 +995,8 @@ async def update_agent(
 # last player state reported by a kiosk ({"state": ..., "videoId": ...});
 # surfaced in /api/status so the app can advance its queue on "ended"
 _youtube_state: Optional[dict] = None
+# same, for the Spotify embed ({"state": ..., "uri": ...})
+_spotify_state: Optional[dict] = None
 
 _YT_BACKSTOP_SECONDS = 10.0
 
@@ -980,7 +1004,8 @@ _YT_BACKSTOP_SECONDS = 10.0
 async def _yt_backstop(ended_override: ShowNowRequest) -> None:
     """If the app isn't around to clear a finished video, do it ourselves so
     the TV doesn't sit on the YouTube end screen forever. The app's queue poll
-    (1 s) replaces the override long before this fires, so no race."""
+    (1 s) replaces the override long before this fires, so no race.
+    Serves spotify overrides too — it only compares override identity."""
     await asyncio.sleep(_YT_BACKSTOP_SECONDS)
     if state.override is ended_override:
         state.override = None
@@ -991,7 +1016,7 @@ async def _yt_backstop(ended_override: ShowNowRequest) -> None:
 
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
-    global _youtube_state
+    global _youtube_state, _spotify_state
     await hub.register(ws)
     try:
         while True:
@@ -1000,7 +1025,9 @@ async def ws_endpoint(ws: WebSocket):
                 data = json.loads(msg)
             except ValueError:
                 continue  # keepalive "ping"
-            if isinstance(data, dict) and data.get("type") == "yt-state":
+            if not isinstance(data, dict):
+                continue
+            if data.get("type") == "yt-state":
                 _youtube_state = {
                     "state": data.get("state"),
                     "videoId": data.get("videoId"),
@@ -1009,6 +1036,17 @@ async def ws_endpoint(ws: WebSocket):
                     data.get("state") == "ended"
                     and state.override is not None
                     and state.override.type == "youtube"
+                ):
+                    asyncio.create_task(_yt_backstop(state.override))
+            elif data.get("type") == "sp-state":
+                _spotify_state = {
+                    "state": data.get("state"),
+                    "uri": data.get("uri"),
+                }
+                if (
+                    data.get("state") == "ended"
+                    and state.override is not None
+                    and state.override.type == "spotify"
                 ):
                     asyncio.create_task(_yt_backstop(state.override))
     except WebSocketDisconnect:
@@ -1053,6 +1091,7 @@ async def status():
         "override_active": state.override is not None,
         "now_showing": hub.current,
         "youtube_state": _youtube_state,
+        "spotify_state": _spotify_state,
     }
 
 
@@ -1070,6 +1109,8 @@ async def put_playlist(playlist: Playlist):
                 raise HTTPException(400, f"Media file not found: {item.source}")
         elif item.type == "youtube" and _youtube_id(item.source) is None:
             raise HTTPException(400, f"Not a valid YouTube video id: {item.source}")
+        elif item.type == "spotify" and _spotify_uri(item.source) is None:
+            raise HTTPException(400, f"Not a valid Spotify URI: {item.source}")
     state.playlist = playlist
     state.index = 0
     state.save_playlist()
@@ -1208,6 +1249,11 @@ async def show_now(req: ShowNowRequest):
         # instantly "ended" to a queue-polling controller
         global _youtube_state
         _youtube_state = None
+    if req.type == "spotify":
+        if _spotify_uri(req.source) is None:
+            raise HTTPException(400, "Not a valid Spotify URI")
+        global _spotify_state
+        _spotify_state = None  # same stale-state hazard as youtube
     state.override = req
     state.override_id = uuid.uuid4().hex[:8]
     if req.duration:
@@ -1240,6 +1286,20 @@ async def youtube_control(req: YouTubeControlRequest):
     if req.action == "seek" and req.value is None:
         raise HTTPException(400, "seek needs an offset value")
     await hub.broadcast({"type": "yt-control", "action": req.action, "value": req.value})
+    return {"ok": True}
+
+
+class SpotifyControlRequest(BaseModel):
+    action: Literal["play", "pause", "seek"]
+    # seek: signed offset in seconds (the Embed API has no volume control)
+    value: Optional[int] = Field(default=None, ge=-86400, le=86400)
+
+
+@app.post("/api/spotify/control", dependencies=[Depends(require_control_mutation)])
+async def spotify_control(req: SpotifyControlRequest):
+    if req.action == "seek" and req.value is None:
+        raise HTTPException(400, "seek needs an offset value")
+    await hub.broadcast({"type": "sp-control", "action": req.action, "value": req.value})
     return {"ok": True}
 
 
