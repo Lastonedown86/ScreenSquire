@@ -15,7 +15,8 @@ echo "==> Installing for user: $USER_NAME ($HOME_DIR)"
 sudo apt-get update
 # Trixie ships the binary as `chromium`; Bookworm as `chromium-browser`. Install
 # whichever exists (kiosk.sh auto-detects the binary name at runtime).
-sudo apt-get install -y python3-venv chromium unzip || sudo apt-get install -y python3-venv chromium-browser unzip
+sudo apt-get install -y python3-venv chromium unzip wayvnc openssh-client || \
+  sudo apt-get install -y python3-venv chromium-browser unzip wayvnc openssh-client
 
 # ---------------------------------------------------------------- agent
 if [ ! -d "$AGENT_DIR" ]; then

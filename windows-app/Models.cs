@@ -130,3 +130,8 @@ public class KioskResult
     [JsonPropertyName("running")] public bool? Running { get; set; }
     [JsonPropertyName("error")] public string? Error { get; set; }
 }
+
+public record RemoteDesktopSession(
+    [property: JsonPropertyName("port")] int Port,
+    [property: JsonPropertyName("username")] string Username,
+    [property: JsonPropertyName("password")] string Password);

@@ -23,6 +23,7 @@ import mimetypes
 import os
 import py_compile
 import re
+import secrets
 import shutil
 import socket
 import stat
@@ -61,7 +62,7 @@ PLAYLIST_FILE = DATA_DIR / "playlist.json"
 PORT = int(os.environ.get("SIGNAGE_PORT", "8080"))
 NAME_FILE = DATA_DIR / "name.txt"
 TRUST_FILE = DATA_DIR / "trust.json"
-AGENT_VERSION = "2026.07.25.8"  # bump on every agent change; the app compares this
+AGENT_VERSION = "2026.07.26.2"  # bump on every agent change; the app compares this
 
 
 def _load_name() -> str:
@@ -348,6 +349,7 @@ async def lifespan(app: FastAPI):
             zc.close()
         except Exception:
             pass
+    await _stop_wayvnc()
 
 
 app = FastAPI(title="Pi Signage Agent", version="0.1.0", lifespan=lifespan)
@@ -647,6 +649,118 @@ async def set_kiosk(req: KioskRequest):
     if rc != 0:
         return {"ok": False, "running": None, "error": (err.strip() or out.strip() or "systemctl failed")}
     return {"ok": True, "running": req.running, "error": None}
+
+
+# ---- remote desktop (wayvnc on demand, paired-signature gated) ----
+WAYVNC_PORT = 5900
+WAYVNC_IDLE_SECONDS = 15 * 60
+_RSA_KEY_FILE = DATA_DIR / "wayvnc_rsa_key.pem"
+_WAYVNC_CONFIG = DATA_DIR / "wayvnc.config"
+_remote_proc = None          # asyncio subprocess (or FakeProc in tests)
+_remote_creds = None         # dict returned to the app while a session is live
+_remote_idle_task = None     # asyncio.Task that stops an idle session
+
+
+class RemoteDesktopRequest(BaseModel):
+    running: bool
+
+
+async def _ensure_rsa_key() -> None:
+    if not _RSA_KEY_FILE.exists():
+        rc, _, err = await _run(
+            ["ssh-keygen", "-t", "rsa", "-b", "2048", "-m", "PEM",
+             "-f", str(_RSA_KEY_FILE), "-N", "", "-q"])
+        if rc != 0:
+            raise RuntimeError(f"could not generate wayvnc key: {err.strip()}")
+
+
+def _write_wayvnc_config(username: str, password: str) -> None:
+    content = (
+        "enable_auth=true\n"
+        f"username={username}\n"
+        f"password={password}\n"
+        f"rsa_private_key_file={_RSA_KEY_FILE}\n")
+    fd = os.open(_WAYVNC_CONFIG, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, content.encode())
+    finally:
+        os.close(fd)
+    os.chmod(_WAYVNC_CONFIG, 0o600)  # ensure 0600 even if the file pre-existed with looser mode
+
+
+async def _spawn_wayvnc(config_path: str):
+    # Seam: tests monkeypatch this so no real process is launched.
+    return await asyncio.create_subprocess_exec(
+        "wayvnc", "--config", config_path, "0.0.0.0", str(WAYVNC_PORT),
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE)
+
+
+async def _stop_wayvnc() -> None:
+    global _remote_proc, _remote_creds, _remote_idle_task
+    if _remote_idle_task is not None:
+        _remote_idle_task.cancel()
+        _remote_idle_task = None
+    if _remote_proc is not None:
+        try:
+            _remote_proc.terminate()
+            await asyncio.wait_for(_remote_proc.wait(), timeout=5)
+        except (ProcessLookupError, asyncio.TimeoutError):
+            try:
+                _remote_proc.kill()
+            except ProcessLookupError:
+                pass
+        _remote_proc = None
+    _remote_creds = None
+    try:
+        _WAYVNC_CONFIG.unlink()
+    except FileNotFoundError:
+        pass
+
+
+async def _idle_stop_after(seconds: int) -> None:
+    try:
+        await asyncio.sleep(seconds)
+        await _stop_wayvnc()
+    except asyncio.CancelledError:
+        pass
+
+
+@app.get("/api/remote-desktop")
+async def remote_desktop_status():
+    running = _remote_proc is not None and _remote_proc.returncode is None
+    return {"running": running}
+
+
+@app.post("/api/remote-desktop", dependencies=[Depends(require_control_mutation)])
+async def set_remote_desktop(req: RemoteDesktopRequest):
+    global _remote_proc, _remote_creds, _remote_idle_task
+    if not req.running:
+        await _stop_wayvnc()
+        return {"ok": True, "running": False, "error": None}
+    if _remote_proc is not None and _remote_proc.returncode is None:
+        return {"ok": True, "running": True, "error": None, **_remote_creds}
+    # Respawn path: the previous wayvnc died on its own. Its idle-timeout task
+    # is still pending and would later stop() the *new* session early — cancel it.
+    if _remote_idle_task is not None:
+        _remote_idle_task.cancel()
+        _remote_idle_task = None
+    try:
+        await _ensure_rsa_key()
+    except Exception as exc:
+        raise HTTPException(500, f"Could not prepare remote desktop: {exc}")
+    username = secrets.token_hex(4)
+    password = secrets.token_urlsafe(12)
+    _write_wayvnc_config(username, password)
+    _remote_proc = await _spawn_wayvnc(str(_WAYVNC_CONFIG))
+    await asyncio.sleep(0.5)   # give wayvnc a moment to bind or fail
+    if _remote_proc.returncode is not None:
+        err = (await _remote_proc.stderr.read()).decode("utf-8", "replace")[:200]
+        await _stop_wayvnc()
+        raise HTTPException(500, f"wayvnc failed to start: {err.strip()}")
+    _remote_creds = {"port": WAYVNC_PORT, "username": username, "password": password}
+    _remote_idle_task = asyncio.create_task(_idle_stop_after(WAYVNC_IDLE_SECONDS))
+    return {"ok": True, "running": True, "error": None, **_remote_creds}
 
 
 # ---- self-update (pushed from the control app / deploy script; no SSH) ----

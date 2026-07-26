@@ -29,6 +29,23 @@ public class ApiClientTests
     }
 
     [Fact]
+    public async Task StartRemoteDesktop_signs_request_and_returns_session()
+    {
+        var handler = new RecordingHandler();
+        using var client = new ApiClient("pi", 8080, handler);
+        var session = await client.StartRemoteDesktopAsync(Context());
+
+        Assert.NotNull(session);
+        Assert.Equal(5900, session!.Port);
+        Assert.Equal("u1", session.Username);
+        Assert.Equal("p1", session.Password);
+        var req = handler.Requests.Single();
+        Assert.Equal(HttpMethod.Post, req.Method);
+        Assert.Equal("/api/remote-desktop", req.RequestUri!.PathAndQuery);
+        AssertSigned(req, System.Text.Encoding.UTF8.GetBytes("{\"running\":true}"));
+    }
+
+    [Fact]
     public async Task Legacy_unsigned_context_sends_mutations_without_auth_headers()
     {
         var handler = new RecordingHandler();
@@ -242,6 +259,8 @@ public class ApiClientTests
                     """{"name":"new image.png"}""",
                 "/api/kiosk" =>
                     """{"ok":true,"running":false,"error":null}""",
+                "/api/remote-desktop" =>
+                    """{"ok":true,"running":true,"error":null,"port":5900,"username":"u1","password":"p1"}""",
                 _ => """{"ok":true}""",
             };
             return new HttpResponseMessage(HttpStatusCode.OK)
