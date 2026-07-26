@@ -233,11 +233,15 @@ jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
     if: github.event_name != 'push' || github.event.repository.visibility == 'public'
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        language: [csharp, python]
+        include:
+          - language: csharp
+            os: windows-latest
+          - language: python
+            os: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: github/codeql-action/init@v4
