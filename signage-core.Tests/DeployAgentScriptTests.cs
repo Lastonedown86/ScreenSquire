@@ -152,6 +152,65 @@ public sealed class DeployAgentScriptTests
         Assert.False(File.Exists(fixture.CapturePath));
     }
 
+    [Fact]
+    public async Task Deployment_holds_shared_device_send_lock_through_response()
+    {
+        using var fixture = new ScriptFixture();
+        var entered = Path.Combine(Path.GetDirectoryName(fixture.CapturePath)!, "entered");
+        var release = Path.Combine(Path.GetDirectoryName(fixture.CapturePath)!, "release");
+        var wrapper = fixture.WriteWrapper(
+            """
+            function global:Invoke-RestMethod {
+                param(
+                    [Parameter(Position=0)][string]$Uri,
+                    [string]$Method = "GET",
+                    [hashtable]$Headers,
+                    [hashtable]$Form,
+                    [int]$TimeoutSec
+                )
+                if ($Method -ieq "POST") {
+                    [IO.File]::WriteAllText($env:ENTERED, "entered")
+                    while (-not [IO.File]::Exists($env:RELEASE)) {
+                        Start-Sleep -Milliseconds 20
+                    }
+                    return [pscustomobject]@{ ok = $true }
+                }
+                return [pscustomobject]@{ agent_version = $env:EXPECTED_VERSION }
+            }
+            & $env:DEPLOY_SCRIPT -Hosts 127.0.0.1 -Port 18080
+            """);
+
+        var running = fixture.Start(
+            wrapper,
+            new Dictionary<string, string>
+            {
+                ["ENTERED"] = entered,
+                ["RELEASE"] = release,
+            });
+        await WaitForFileAsync(entered);
+        var lockPath = ControlSendLock.PathFor(
+            fixture.CredentialsPath,
+            fixture.DeviceId);
+        Assert.Throws<IOException>(() => new FileStream(
+            lockPath,
+            FileMode.OpenOrCreate,
+            FileAccess.ReadWrite,
+            FileShare.None));
+        Assert.DoesNotContain(fixture.DeviceId, Path.GetFileName(lockPath));
+
+        File.WriteAllText(release, "release");
+        var result = await CompleteAsync(running);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Empty(File.ReadAllBytes(lockPath));
+    }
+
+    static async Task WaitForFileAsync(string path)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (!File.Exists(path))
+            await Task.Delay(20, timeout.Token);
+    }
+
     static async Task<ProcessResult> CompleteAsync(Process process)
     {
         using (process)
@@ -250,7 +309,9 @@ public sealed class DeployAgentScriptTests
             return path;
         }
 
-        public Process Start(string wrapper)
+        public Process Start(
+            string wrapper,
+            IReadOnlyDictionary<string, string>? environment = null)
         {
             var script = Path.GetFullPath(
                 Path.Combine(AppContext.BaseDirectory, @"..\..\..\..\deploy-agent.ps1"));
@@ -268,6 +329,11 @@ public sealed class DeployAgentScriptTests
             start.Environment["DEPLOY_SCRIPT"] = script;
             start.Environment["CAPTURE"] = CapturePath;
             start.Environment["EXPECTED_VERSION"] = AgentBundle.Version()!;
+            if (environment is not null)
+            {
+                foreach (var (name, value) in environment)
+                    start.Environment[name] = value;
+            }
             return Process.Start(start) ?? throw new InvalidOperationException();
         }
 

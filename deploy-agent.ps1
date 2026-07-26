@@ -44,6 +44,40 @@ function Get-VaultMutexName([string]$Path) {
     return "Local\PiSignage.CredentialVault.$([Convert]::ToHexString($hash))"
 }
 
+function Get-ControlSendLockPath([string]$DeviceId) {
+    if ([string]::IsNullOrWhiteSpace($DeviceId)) {
+        throw "DeviceId is required for the control send lock."
+    }
+    $deviceBytes = [Text.Encoding]::UTF8.GetBytes($DeviceId)
+    $deviceHash = [Convert]::ToHexString(
+        [Security.Cryptography.SHA256]::HashData($deviceBytes))
+    $directory = [IO.Path]::GetDirectoryName(
+        [IO.Path]::GetFullPath($credentialsFile))
+    return [IO.Path]::Combine(
+        $directory,
+        ".control-send-$deviceHash.lock")
+}
+
+function Enter-ControlSendLock([string]$DeviceId) {
+    $path = Get-ControlSendLockPath $DeviceId
+    [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path)) |
+        Out-Null
+    while ($true) {
+        try {
+            return [IO.FileStream]::new(
+                $path,
+                [IO.FileMode]::OpenOrCreate,
+                [IO.FileAccess]::ReadWrite,
+                [IO.FileShare]::None,
+                1,
+                [IO.FileOptions]::WriteThrough)
+        }
+        catch [IO.IOException] {
+            Start-Sleep -Milliseconds 25
+        }
+    }
+}
+
 function Test-PairedDevice($Vault, [string]$DeviceId) {
     return (
         -not [string]::IsNullOrWhiteSpace($DeviceId) -and
@@ -267,7 +301,11 @@ try {
         }
         $base = "http://${targetHost}:$targetPort"
         Write-Host "`n==> $($device.Name) ($targetHost)"
+        $sendLock = $null
         try {
+            # This cross-process file lock is shared with the WPF app and stays
+            # held from counter allocation through response receipt.
+            $sendLock = Enter-ControlSendLock ([string]$device.DeviceId)
             $headers = Get-SignedHeaders `
                 -DeviceId ([string]$device.DeviceId) `
                 -ZipBytes $zipBytes `
@@ -283,6 +321,11 @@ try {
             Write-Warning "$($device.Name) — push failed: $($_.Exception.Message)"
             $failed += $device.Name
             continue
+        }
+        finally {
+            if ($null -ne $sendLock) {
+                $sendLock.Dispose()
+            }
         }
         if (-not $response.ok) {
             Write-Warning "$($device.Name) — Pi rejected the update"

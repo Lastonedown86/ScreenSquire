@@ -69,10 +69,11 @@ echo "$USER_NAME ALL=(root) NOPASSWD: /usr/bin/nmcli" > "$TMP_SUDO"
 sudo visudo -cf "$TMP_SUDO" && sudo install -m 0440 "$TMP_SUDO" /etc/sudoers.d/pisignage-nmcli
 rm -f "$TMP_SUDO"
 
-# 7. Remote control: enable the Wayland VNC server (wayvnc) on :5900 so staff can
-#    drive the TV's screen with keyboard/mouse from the control app.
-sudo raspi-config nonint do_vnc 0 || true
+# 7. Remote support is attended on the store laptop through Windows Quick
+#    Assist. Explicitly disable Raspberry Pi VNC, including on images where it
+#    was enabled previously.
+sudo raspi-config nonint do_vnc 1 || true
 
 sudo systemctl enable usb-gadget-ncm.service
 echo "==> USB provisioning installed. Reboot, then this Pi presents a USB setup link at 10.55.0.1:8080."
-echo "    Remote control: VNC (wayvnc) on <pi-ip>:5900."
+echo "    Remote support: use attended Windows Quick Assist on the store laptop."

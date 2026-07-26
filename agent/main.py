@@ -25,6 +25,7 @@ import py_compile
 import re
 import shutil
 import socket
+import stat
 import tempfile
 import threading
 import time
@@ -59,7 +60,7 @@ PLAYLIST_FILE = DATA_DIR / "playlist.json"
 PORT = int(os.environ.get("SIGNAGE_PORT", "8080"))
 NAME_FILE = DATA_DIR / "name.txt"
 TRUST_FILE = DATA_DIR / "trust.json"
-AGENT_VERSION = "2026.07.25.5"  # bump on every agent change; the app compares this
+AGENT_VERSION = "2026.07.25.7"  # bump on every agent change; the app compares this
 
 
 def _load_name() -> str:
@@ -544,7 +545,7 @@ async def _wlan_ssid() -> Optional[str]:
     return None
 
 
-@app.post("/api/wifi", dependencies=[Depends(require_control_mutation)])
+@app.post("/api/wifi", dependencies=[Depends(require_usb_control_mutation)])
 async def set_wifi(req: WifiRequest):
     rc, out, err = await _run(
         ["sudo", "nmcli", "dev", "wifi", "connect", req.ssid,
@@ -566,7 +567,7 @@ async def wifi_status():
     return {"connected": ip is not None, "ssid": ssid, "ip": ip}
 
 
-# ---- kiosk control (drive the OS: stop the kiosk to reach the desktop over VNC) ----
+# ---- kiosk control (start or stop the local signage display) ----
 KIOSK_UNIT = "pisignage-kiosk.service"
 
 
@@ -599,6 +600,9 @@ _UPDATE_MAX_COMPRESSED_BYTES = 20 * 1024 * 1024
 _UPDATE_MAX_BYTES = 20 * 1024 * 1024
 _UPDATE_ROOT_FILES = frozenset(
     {"main.py", "trust.py", "control_auth.py", "delivery_reset.py"}
+)
+_UPDATE_REQUIRED_STATIC_FILES = frozenset(
+    {"static/kiosk.html", "static/dashboard.html"}
 )
 _VERSION_RE = re.compile(r'AGENT_VERSION\s*=\s*"([^"]+)"')
 _restart_task: Optional[asyncio.Task] = None  # strong ref: keep the restart task from being GC'd
@@ -635,10 +639,22 @@ async def update_agent(
     total = 0
     paths: dict[str, str] = {}
     root_files: set[str] = set()
-    has_static = False
+    regular_static_files: set[str] = set()
     for info in zf.infolist():
         name = info.filename
         is_directory = name.endswith("/")
+        unix_type = stat.S_IFMT(info.external_attr >> 16)
+        if (
+            (is_directory and unix_type not in {0, stat.S_IFDIR})
+            or (
+                not is_directory
+                and unix_type not in {0, stat.S_IFREG}
+            )
+        ):
+            raise HTTPException(
+                400,
+                f"Update entries must be regular files or directories: {name}",
+            )
         raw_parts = name.split("/")
         path_parts = raw_parts[:-1] if is_directory else raw_parts
         if name.startswith("/") or ":" in name or "\\" in name or ".." in path_parts:
@@ -650,7 +666,6 @@ async def update_agent(
             if canonical != "static" and not canonical.startswith("static/"):
                 raise HTTPException(400, f"Unexpected folder in update: {name}")
             kind = "directory"
-            has_static = True
         else:
             if canonical not in _UPDATE_ROOT_FILES and not canonical.startswith("static/"):
                 raise HTTPException(400, f"Unexpected file in update: {name}")
@@ -658,7 +673,8 @@ async def update_agent(
             if canonical in _UPDATE_ROOT_FILES:
                 root_files.add(canonical)
             else:
-                has_static = True
+                if info.file_size > 0:
+                    regular_static_files.add(canonical)
 
         parents = [
             "/".join(path_parts[:index])
@@ -680,8 +696,15 @@ async def update_agent(
     missing = sorted(_UPDATE_ROOT_FILES - root_files)
     if missing:
         raise HTTPException(400, f"Update is missing {', '.join(missing)}")
-    if not has_static:
-        raise HTTPException(400, "Update is missing static content")
+    missing_static = sorted(
+        _UPDATE_REQUIRED_STATIC_FILES - regular_static_files
+    )
+    if missing_static:
+        raise HTTPException(
+            400,
+            "Update is missing required non-empty static files: "
+            + ", ".join(missing_static),
+        )
 
     tmp = Path(tempfile.mkdtemp(prefix="update-tmp-", dir=APP_DIR))
     try:

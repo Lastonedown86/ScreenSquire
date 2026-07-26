@@ -59,7 +59,7 @@ STORE
   enter bottom-label PIN
   POST /api/pair
   save secret in DPAPI vault
-  signed POST /api/wifi
+  USB-only signed POST /api/wifi
   poll public GET /api/wifi/status
   verify /api/status DeviceId
   unplug USB; continue passwordlessly over store Wi-Fi
@@ -118,7 +118,7 @@ POST /api/pair                          USB + PIN bootstrap
   -> { "device_id": "...", "controller_id": "...",
        "controller_secret": "<base64 32 bytes>" }
 
-POST /api/wifi                          signed control request
+POST /api/wifi                          USB-only signed control request
   { "ssid": "ShopWiFi", "password": "..." }
   -> { "ok": true, "connected": true,
        "ip": "192.168.1.42", "error": null }

@@ -60,9 +60,6 @@
                 <Button x:Name="BtnKiosk" Content="_TV display on/off" Margin="0,0,6,4" Click="BtnKiosk_Click" IsEnabled="False"
                         ToolTip="Turn the signage on the TV on or off (connect to your Pi first)"
                         ToolTipService.ShowOnDisabled="True"/>
-                <Button x:Name="BtnRemote" Content="_View Pi screen" Margin="0,0,6,4" Click="BtnRemote_Click" IsEnabled="False"
-                        ToolTip="See and control the Pi's screen from this computer (connect to your Pi first)"
-                        ToolTipService.ShowOnDisabled="True"/>
                 <Button x:Name="BtnUpdatePi" Content="Update _Pi software" Margin="0,0,14,4"
                         Click="BtnUpdatePi_Click" Visibility="Collapsed"
                         ToolTip="This app came with newer Pi software — click to update your Pis. The TV will blink once."/>

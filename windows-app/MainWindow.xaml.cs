@@ -173,7 +173,7 @@ public partial class MainWindow : Window
             MainArea.IsEnabled = true;
             GettingStarted.Visibility = Visibility.Collapsed;
             _connectedHost = host;
-            BtnKiosk.IsEnabled = BtnRemote.IsEnabled = true;   // device actions target this Pi
+            BtnKiosk.IsEnabled = true;   // device actions target this Pi
             await ReloadMediaAsync();
             await ReloadPlaylistAsync();
             await RefreshStatusAsync();
@@ -193,7 +193,7 @@ public partial class MainWindow : Window
             GettingStarted.Visibility = Visibility.Visible;
             _connectedHost = null;
             _connectedControlContext = null;
-            BtnKiosk.IsEnabled = BtnRemote.IsEnabled = false;
+            BtnKiosk.IsEnabled = false;
             BtnKiosk.Content = "_TV display on/off";
             LblStatus.Text = "Not connected — follow the steps above";
             return null;
@@ -420,7 +420,9 @@ public partial class MainWindow : Window
                 var context = ControlContext(device.DeviceId);
                 using var http = new HttpClient
                 {
-                    Timeout = TimeSpan.FromSeconds(15),
+                    // Reset may enumerate and delete several NetworkManager
+                    // profiles before replying.
+                    Timeout = TimeSpan.FromSeconds(90),
                 };
                 var operations = new WindowsDeliveryPreparationOperations(
                     http,
@@ -450,7 +452,7 @@ public partial class MainWindow : Window
             _connectedHost = null;
             MainArea.IsEnabled = false;
             GettingStarted.Visibility = Visibility.Visible;
-            BtnKiosk.IsEnabled = BtnRemote.IsEnabled = false;
+            BtnKiosk.IsEnabled = false;
             BtnKiosk.Content = "_TV display on/off";
             LblStatus.Text = "Ready for delivery — unplug the USB cable.";
             try
@@ -483,7 +485,8 @@ public partial class MainWindow : Window
                 }
             }
 
-            if (residue.Count == 0)
+            if (residue.Count == 0 &&
+                !outcome.ResetWasConfirmedAfterAmbiguousFailure)
             {
                 Toaster.Show(
                     "Ready for delivery — unplug the USB cable.",
@@ -491,13 +494,21 @@ public partial class MainWindow : Window
             }
             else
             {
+                var confirmationWarning =
+                    outcome.ResetWasConfirmedAfterAmbiguousFailure
+                        ? "The reset response was lost, but the same Pi confirmed over USB that it is now unpaired. "
+                        : "";
+                var residueWarning = residue.Count == 0
+                    ? ""
+                    : "Some local builder records remain: " +
+                      string.Join(
+                          ", ",
+                          residue.Select(error => error.Operation).Distinct()) +
+                      ".";
                 Toaster.Show(
                     "Ready for delivery — unplug the USB cable. " +
-                    "The Pi is reset, but some local builder records remain: " +
-                    string.Join(
-                        ", ",
-                        residue.Select(error => error.Operation).Distinct()) +
-                    ".",
+                    confirmationWarning +
+                    residueWarning,
                     ToastKind.Warning);
             }
         }
@@ -508,7 +519,7 @@ public partial class MainWindow : Window
         }
     }
 
-    // Stop the kiosk to reach the Pi's desktop (drive the OS over VNC), or restart it.
+    // Stop or restart the signage kiosk on the Pi.
     async void BtnKiosk_Click(object sender, RoutedEventArgs e)
     {
         if (_api == null)
@@ -529,7 +540,7 @@ public partial class MainWindow : Window
                 ConnectedControlContext());
             if (!ok) { Toaster.Show("Couldn't switch the TV display — try again.", ToastKind.Error); return; }
             Toaster.Show(running
-                ? "TV display is off — use 'View Pi screen' to control the Pi's desktop."
+                ? "TV display is off — the Pi desktop is visible locally."
                 : "TV display is on — your signage is playing again.", ToastKind.Success);
             await RefreshKioskLabelAsync();
         }
@@ -596,36 +607,6 @@ public partial class MainWindow : Window
             Toaster.Show("Couldn't update your Pis: " + ex.Message, ToastKind.Error);
         }
         finally { BtnUpdatePi.IsEnabled = true; }
-    }
-
-    // Open a VNC session to the CONNECTED Pi so staff can drive the TV with kb/mouse.
-    void BtnRemote_Click(object sender, RoutedEventArgs e)
-    {
-        if (_connectedHost is null)
-        {
-            Toaster.Show("Connect to your Pi first — pick it at the top and click Connect.");
-            return;
-        }
-        var viewer = PiSignage.Signage.VncLauncher.FindViewer(PiSignage.Signage.VncLauncher.DefaultViewerPaths());
-        if (viewer == null)
-        {
-            if (MessageBox.Show(this,
-                    "No VNC viewer is installed. Install TigerVNC Viewer now? (a winget window will open)",
-                    "Remote control", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
-            {
-                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
-                    "winget", $"install --id {PiSignage.Signage.VncLauncher.ViewerWingetId} -e --accept-source-agreements --accept-package-agreements") { UseShellExecute = true }); }
-                catch (System.Exception ex) { Toaster.Show("Couldn't start the installer: " + ex.Message, ToastKind.Error); }
-            }
-            return;
-        }
-        try
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
-                viewer, PiSignage.Signage.VncLauncher.BuildLaunchArgs(viewer, _connectedHost)) { UseShellExecute = false });
-            LblStatus.Text = $"Opening remote control ({_connectedHost}:{PiSignage.Signage.VncLauncher.Port})…";
-        }
-        catch (System.Exception ex) { Toaster.Show("Couldn't open the viewer: " + ex.Message, ToastKind.Error); }
     }
 
     private async void BtnScan_Click(object sender, RoutedEventArgs e)
@@ -1194,7 +1175,8 @@ public partial class MainWindow : Window
             stableDeviceId,
             _credentialVault.Load().ControllerId,
             credential.Secret,
-            () => _credentialVault.TakeNextCounter(stableDeviceId));
+            () => _credentialVault.TakeNextCounter(stableDeviceId),
+            _credentialVault.Path);
     }
 
     private PiSignage.Signage.ControlContext ControlContext(string deviceId) =>
