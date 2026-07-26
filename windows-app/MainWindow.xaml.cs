@@ -1166,7 +1166,7 @@ public partial class MainWindow : Window
     private PiSignage.Signage.ControlContext? TryControlContext(string deviceId)
     {
         if (string.IsNullOrWhiteSpace(deviceId))
-            return null;
+            return PiSignage.Signage.ControlContext.LegacyUnsigned();
         var credential = _credentialVault.TryGet(deviceId);
         if (credential is null)
             return null;

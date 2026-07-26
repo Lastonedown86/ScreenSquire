@@ -690,7 +690,7 @@ public partial class SignageWindow : Window
     ControlContext? TryControlContext(string deviceId)
     {
         if (string.IsNullOrWhiteSpace(deviceId))
-            return null;
+            return ControlContext.LegacyUnsigned();
         var credential = _credentialVault.TryGet(deviceId);
         if (credential is null)
             return null;

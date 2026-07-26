@@ -8,15 +8,17 @@ public static class DeviceIdentityPolicy
         string reportedHostname)
     {
         ArgumentNullException.ThrowIfNull(saved);
-        if (string.IsNullOrWhiteSpace(reportedDeviceId))
-            return false;
         if (!string.IsNullOrWhiteSpace(saved.DeviceId))
         {
+            // once verified, only the same stable identity is acceptable —
+            // an agent reporting no device_id never downgrades this check
             return string.Equals(
                 saved.DeviceId,
                 reportedDeviceId,
                 StringComparison.Ordinal);
         }
+        // never-verified entry: hostname is the only identity we have; agents
+        // older than 2026.07.25.1 report no device_id at all
         return !string.IsNullOrWhiteSpace(saved.Hostname) &&
             !string.IsNullOrWhiteSpace(reportedHostname) &&
             string.Equals(
