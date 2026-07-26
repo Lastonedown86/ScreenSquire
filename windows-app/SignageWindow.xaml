@@ -11,93 +11,97 @@
         <ProgressBar x:Name="Busy" DockPanel.Dock="Top" Height="4" IsIndeterminate="True"
                      Visibility="Collapsed"/>
         <StackPanel DockPanel.Dock="Top" Margin="14,10,14,0">
-            <!-- setup strip: touched rarely -->
-            <TextBlock Text="TVs to send to" FontWeight="SemiBold"/>
-            <ItemsControl x:Name="TvList" Margin="0,2,0,2">
-                <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                        <CheckBox Content="{Binding DisplayLabel}" IsChecked="{Binding Checked, Mode=TwoWay}"
-                                  IsEnabled="{Binding CanControl}"
-                                  Margin="0,0,14,4" Checked="Tv_CheckChanged" Unchecked="Tv_CheckChanged"
-                                  ToolTip="{Binding ControlHint}"
-                                  ToolTipService.ShowOnDisabled="True"/>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
-            <TextBlock x:Name="NoTvHint" Text="Tick at least one TV above."
-                       Foreground="{StaticResource Warning}" Margin="0,0,0,4"
-                       TextWrapping="Wrap" Visibility="Collapsed"/>
-
-            <WrapPanel Margin="0,4,0,0" VerticalAlignment="Center">
-                <TextBlock Text="Board:" VerticalAlignment="Center" Margin="0,0,4,0" Foreground="{StaticResource TextMuted}"/>
-                <ComboBox x:Name="CmbSlot" MinWidth="170" SelectionChanged="Slot_Changed" VerticalAlignment="Center"
-                          ToolTip="Which board on the TV this capture fills"/>
-                <Button Content="+ Add _board…" Click="AddBoard_Click" Margin="6,0,0,0"
-                        ToolTip="Add another board to capture into — like 'Top 8 bracket'"/>
-                <Button x:Name="BtnRemoveBoard" Content="Remove board" Click="RemoveBoard_Click" Margin="6,0,0,0"
-                        ToolTip="Take this board off the list (pairings and standings always stay)"
-                        ToolTipService.ShowOnDisabled="True"/>
-                <TextBlock Text="Minutes:" VerticalAlignment="Center" Margin="16,0,4,0" Foreground="{StaticResource TextMuted}"/>
-                <TextBox x:Name="TxtMinutes" Text="25" Width="46" VerticalAlignment="Center"
-                         PreviewTextInput="NumberOnly_PreviewTextInput" KeyDown="TimerField_KeyDown"
-                         TextChanged="TimerField_Changed"/>
-                <StackPanel x:Name="Presets" Orientation="Horizontal" Margin="6,0,0,0"/>
-                <TextBlock Text="Round:" VerticalAlignment="Center" Margin="16,0,4,0" Foreground="{StaticResource TextMuted}"/>
-                <TextBox x:Name="TxtRound" Text="1" Width="46" VerticalAlignment="Center"
-                         PreviewTextInput="NumberOnly_PreviewTextInput" KeyDown="TimerField_KeyDown"
-                         TextChanged="TimerField_Changed"/>
-            </WrapPanel>
-
-            <Separator Margin="0,10,0,10"/>
-
-            <!-- round console: touched every round -->
-            <StackPanel HorizontalAlignment="Center">
-                <TextBlock x:Name="ClockDisplay" Text="—:—" FontSize="56" FontWeight="Bold"
-                           FontFamily="Consolas" HorizontalAlignment="Center"/>
-                <TextBlock x:Name="TimerInfo" Text="No round running" HorizontalAlignment="Center"
-                           Foreground="{StaticResource TextMuted}" FontSize="12" Margin="0,0,0,10"/>
-                <Button x:Name="BtnNextRound" Content="▶  Next round — capture pairings and start the clock"
-                        Click="NextRound_Click" Style="{StaticResource PrimaryButton}"
-                        FontSize="16" Padding="22,10" HorizontalAlignment="Center"
-                        ToolTip="Put the new pairings on your screen first, then click"
-                        ToolTipService.ShowOnDisabled="True"/>
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,8,0,0">
-                    <Button x:Name="BtnStart" Content="_Start" Click="StartTimer_Click" Padding="10,3"
-                            ToolTip="Start the countdown with the minutes and round above (or press Enter)"/>
-                    <Button x:Name="BtnPause" Content="_Pause" Click="PauseResume_Click" Margin="6,0,0,0" Padding="8,3"
-                            IsEnabled="False" ToolTip="Pause the round clock — click again to resume"
-                            ToolTipService.ShowOnDisabled="True"/>
-                    <Button x:Name="BtnExtend" Content="+5 _min" Click="Extend_Click" Margin="6,0,0,0" Padding="8,3"
-                            IsEnabled="False" ToolTip="Add 5 minutes to the round clock"
-                            ToolTipService.ShowOnDisabled="True"/>
-                    <Button x:Name="BtnStop" Content="St_op" Click="StopTimer_Click" Margin="6,0,0,0" Padding="8,3"
-                            ToolTip="Stop the countdown and clear the TV clock"/>
+            <GroupBox Header="Show on">
+                <StackPanel>
+                    <ItemsControl x:Name="TvList">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <CheckBox Content="{Binding DisplayLabel}" IsChecked="{Binding Checked, Mode=TwoWay}"
+                                          IsEnabled="{Binding CanControl}"
+                                          Margin="0,0,14,4" Checked="Tv_CheckChanged" Unchecked="Tv_CheckChanged"
+                                          ToolTip="{Binding ControlHint}"
+                                          ToolTipService.ShowOnDisabled="True"/>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock x:Name="NoTvHint" Text="Tick at least one TV above."
+                               Foreground="{StaticResource Warning}"
+                               TextWrapping="Wrap" Visibility="Collapsed"/>
                 </StackPanel>
-            </StackPanel>
+            </GroupBox>
 
-            <Separator Margin="0,10,0,10"/>
+            <GroupBox Header="Board" Margin="0,6,0,0">
+                <StackPanel>
+                    <WrapPanel VerticalAlignment="Center">
+                        <ComboBox x:Name="CmbSlot" MinWidth="170" SelectionChanged="Slot_Changed" VerticalAlignment="Center"
+                                  ToolTip="Which board on the TV this capture fills"/>
+                        <Button Content="+ Add _board…" Click="AddBoard_Click" Margin="6,0,0,0"
+                                ToolTip="Add another board to capture into — like 'Top 8 bracket'"/>
+                        <Button x:Name="BtnRemoveBoard" Content="Remove board" Click="RemoveBoard_Click" Margin="6,0,0,0"
+                                ToolTip="Take this board off the list (pairings and standings always stay)"
+                                ToolTipService.ShowOnDisabled="True"/>
+                    </WrapPanel>
+                    <WrapPanel Margin="0,8,0,0">
+                        <Button x:Name="BtnCapture" Content="_Capture region…" Click="Capture_Click" Padding="10,4"
+                                ToolTip="Draw a box on your screen — that area is sent to the ticked TVs"/>
+                        <Button x:Name="BtnRecapture" Content="_Re-capture" Click="Recapture_Click"
+                                Padding="10,4" Margin="8,0,0,0" IsEnabled="False"
+                                ToolTip="Grab the same area again (after the page on your screen updates)"
+                                ToolTipService.ShowOnDisabled="True"/>
+                        <Button x:Name="BtnPin" Content="P_in to TV" Click="PinBoardToTv_Click"
+                                Padding="10,4" Margin="16,0,0,0"
+                                ToolTip="Show this board on the ticked TVs and keep it there — the round timer floats on top"/>
+                        <Button x:Name="BtnBack" Content="Bac_k to playlist" Click="BackToPlaylist_Click"
+                                Padding="10,4" Margin="8,0,0,0"
+                                ToolTip="Unpin and let the TVs go back to their normal playlists"/>
+                    </WrapPanel>
+                </StackPanel>
+            </GroupBox>
 
-            <WrapPanel>
-                <TextBlock Text="Capture:" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="{StaticResource TextMuted}"/>
-                <Button x:Name="BtnCapture" Content="_Capture region…" Click="Capture_Click" Padding="10,4"
-                        ToolTip="Draw a box on your screen — that area is sent to the ticked TVs"/>
-                <Button x:Name="BtnRecapture" Content="_Re-capture" Click="Recapture_Click"
-                        Padding="10,4" Margin="8,0,0,0" IsEnabled="False"
-                        ToolTip="Grab the same area again (after the page on your screen updates)"
-                        ToolTipService.ShowOnDisabled="True"/>
-                <Button x:Name="BtnPin" Content="P_in to TV" Click="PinBoardToTv_Click"
-                        Padding="10,4" Margin="8,0,0,0"
-                        ToolTip="Show this board on the ticked TVs and keep it there — the round timer floats on top"/>
-                <Button x:Name="BtnBack" Content="Bac_k to playlist" Click="BackToPlaylist_Click"
-                        Padding="10,4" Margin="8,0,0,0"
-                        ToolTip="Unpin and let the TVs go back to their normal playlists"/>
-            </WrapPanel>
+            <GroupBox Header="Round timer" Margin="0,6,0,0">
+                <StackPanel>
+                    <!-- settings sit next to the buttons that use them -->
+                    <WrapPanel HorizontalAlignment="Center">
+                        <TextBlock Text="Round:" VerticalAlignment="Center" Margin="0,0,4,0" Foreground="{StaticResource TextMuted}"/>
+                        <TextBox x:Name="TxtRound" Text="1" Width="46" VerticalAlignment="Center"
+                                 PreviewTextInput="NumberOnly_PreviewTextInput" KeyDown="TimerField_KeyDown"
+                                 TextChanged="TimerField_Changed"/>
+                        <TextBlock Text="Length:" VerticalAlignment="Center" Margin="16,0,4,0" Foreground="{StaticResource TextMuted}"/>
+                        <TextBox x:Name="TxtMinutes" Text="25" Width="46" VerticalAlignment="Center"
+                                 PreviewTextInput="NumberOnly_PreviewTextInput" KeyDown="TimerField_KeyDown"
+                                 TextChanged="TimerField_Changed"/>
+                        <TextBlock Text="min" VerticalAlignment="Center" Margin="4,0,0,0" Foreground="{StaticResource TextMuted}"/>
+                        <StackPanel x:Name="Presets" Orientation="Horizontal" Margin="6,0,0,0"/>
+                    </WrapPanel>
+                    <TextBlock x:Name="ClockDisplay" Text="—:—" FontSize="56" FontWeight="Bold"
+                               FontFamily="Consolas" HorizontalAlignment="Center" Margin="0,4,0,0"/>
+                    <TextBlock x:Name="TimerInfo" Text="No round running" HorizontalAlignment="Center"
+                               Foreground="{StaticResource TextMuted}" FontSize="12" Margin="0,0,0,10"/>
+                    <Button x:Name="BtnNextRound" Content="▶  Next round — capture pairings and start the clock"
+                            Click="NextRound_Click" Style="{StaticResource PrimaryButton}"
+                            FontSize="16" Padding="22,10" HorizontalAlignment="Center"
+                            ToolTip="Put the new pairings on your screen first, then click"
+                            ToolTipService.ShowOnDisabled="True"/>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,8,0,0">
+                        <Button x:Name="BtnStart" Content="_Start" Click="StartTimer_Click" Padding="10,3"
+                                ToolTip="Start the countdown with the round and length above (or press Enter)"/>
+                        <Button x:Name="BtnPause" Content="_Pause" Click="PauseResume_Click" Margin="6,0,0,0" Padding="8,3"
+                                IsEnabled="False" ToolTip="Pause the round clock — click again to resume"
+                                ToolTipService.ShowOnDisabled="True"/>
+                        <Button x:Name="BtnExtend" Content="+5 _min" Click="Extend_Click" Margin="6,0,0,0" Padding="8,3"
+                                IsEnabled="False" ToolTip="Add 5 minutes to the round clock"
+                                ToolTipService.ShowOnDisabled="True"/>
+                        <Button x:Name="BtnStop" Content="St_op" Click="StopTimer_Click" Margin="6,0,0,0" Padding="8,3"
+                                ToolTip="Stop the countdown and clear the TV clock"/>
+                    </StackPanel>
+                </StackPanel>
+            </GroupBox>
 
-            <TextBlock x:Name="Status" Margin="0,10,0,0" Foreground="{StaticResource TextMuted}" TextWrapping="Wrap"/>
-            <TextBlock Text="Last capture (what's on the TV)" Margin="0,10,0,6" Foreground="{StaticResource TextMuted}"/>
+            <TextBlock x:Name="Status" Margin="0,8,0,0" Foreground="{StaticResource TextMuted}" TextWrapping="Wrap"/>
+            <TextBlock Text="Last capture (what's on the TV)" Margin="0,8,0,6" Foreground="{StaticResource TextMuted}"/>
         </StackPanel>
 
         <!-- preview fills all remaining window space edge-to-edge; bigger window = bigger preview -->
