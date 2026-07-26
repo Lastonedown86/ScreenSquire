@@ -1,0 +1,57 @@
+name: Bug report
+description: Report a reproducible ScreenSquire problem
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include Wi-Fi credentials, Recovery PINs, controller secrets,
+        client or store details, or personal machine paths.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the observed and expected behavior.
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Raspberry Pi agent
+        - Pi Signage Control Windows app
+        - USB or Wi-Fi provisioning
+        - Installer or setup scripts
+        - Documentation
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Provide the smallest repeatable sequence using sanitized data.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: Commit SHA or agent version
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Windows and Raspberry Pi OS versions, Pi model, and connection type.
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed credentials, PINs, client/store details, and personal paths.
+          required: true

@@ -1,8 +1,13 @@
-# Pi Signage
+# ScreenSquire
 
-Digital signage for Raspberry Pi with a Windows control app. Each Display Pi is
-the source of truth for its media, playlist, tournament board, and timer, so the
-TV keeps running when the Controller laptop is off.
+[![CI](https://github.com/Lastonedown86/ScreenSquire/actions/workflows/ci.yml/badge.svg)](https://github.com/Lastonedown86/ScreenSquire/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/Lastonedown86/ScreenSquire/actions/workflows/codeql.yml/badge.svg)](https://github.com/Lastonedown86/ScreenSquire/actions/workflows/codeql.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+ScreenSquire is digital-signage software for Raspberry Pi with the **Pi Signage
+Control** Windows app. Each Display Pi is the source of truth for its media,
+playlist, tournament board, and timer, so the TV keeps running when the
+Controller laptop is off.
 
 ```
 agent/            FastAPI service and kiosk pages that run on each Display Pi

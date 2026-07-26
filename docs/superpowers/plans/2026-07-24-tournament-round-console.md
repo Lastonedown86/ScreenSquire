@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Repo root: `the ScreenSquire repository root` (this is the git repo). All paths below are relative to it; run all `git`/`dotnet`/`pytest` commands from it.
+- Repo root: the directory containing `PiSignage.slnx`. All paths below are relative to it; run all `git`/`dotnet`/`pytest` commands from that directory.
 - Spec: `docs/superpowers/specs/2026-07-24-tournament-round-console-design.md`.
 - **No agent endpoint changes.** `POST/GET /api/dashboard` and the payload shape stay exactly as-is.
 - **Plain language everywhere the client sees:** "TV" not "Pi/kiosk", tooltips name the next step, toasts name buttons exactly as labeled. Toast for non-destructive feedback (`Toaster.Show`), MessageBox only for destructive confirms.
