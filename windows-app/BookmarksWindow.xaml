@@ -1,0 +1,138 @@
+<Window x:Class="PiSignage.Control.BookmarksWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:PiSignage.Control"
+        Title="YouTube" Height="600" Width="760"
+        MinHeight="420" MinWidth="560"
+        Background="{StaticResource Bg}">
+    <Grid>
+    <DockPanel LastChildFill="True" Margin="14,10,14,10">
+
+        <!-- which TV plays it -->
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+            <TextBlock Text="Play on:" VerticalAlignment="Center" Margin="0,0,6,0" FontWeight="SemiBold"/>
+            <ComboBox x:Name="CmbDevice" MinWidth="220" VerticalContentAlignment="Center"
+                      SelectionChanged="Device_Changed" DisplayMemberPath="Name"
+                      ToolTip="The TV this window plays videos on"/>
+            <TextBlock x:Name="LblAgentHint" Foreground="{StaticResource Warning}" Margin="10,0,0,0"
+                       VerticalAlignment="Center" TextWrapping="Wrap"/>
+        </DockPanel>
+
+        <!-- transport controls + status -->
+        <StackPanel DockPanel.Dock="Bottom">
+            <WrapPanel Margin="0,8,0,0" VerticalAlignment="Center">
+                <Button x:Name="BtnPlay" Content="▶ _Play on TV" Style="{StaticResource PrimaryButton}"
+                        Margin="0,0,6,4" Click="Play_Click"
+                        ToolTip="Play the selected video on the TV, with sound"/>
+                <Button x:Name="BtnPlayChecked" Content="▶▶ Play tic_ked" Margin="0,0,14,4" Click="PlayChecked_Click"
+                        ToolTip="Play every ticked video in order, top to bottom"
+                        ToolTipService.ShowOnDisabled="True"/>
+                <Button x:Name="BtnPause" Content="⏸ Pause" Margin="0,0,6,4" Click="Pause_Click"
+                        ToolTip="Pause or resume the video on the TV"
+                        ToolTipService.ShowOnDisabled="True"/>
+                <Button x:Name="BtnBack10" Content="≪ 10 s" Margin="0,0,6,4" Click="Back10_Click"
+                        ToolTip="Jump back ten seconds" ToolTipService.ShowOnDisabled="True"/>
+                <Button x:Name="BtnFwd10" Content="10 s ≫" Margin="0,0,14,4" Click="Fwd10_Click"
+                        ToolTip="Jump ahead ten seconds" ToolTipService.ShowOnDisabled="True"/>
+                <TextBlock Text="Volume:" VerticalAlignment="Center" Margin="0,0,6,4"
+                           Foreground="{StaticResource TextMuted}"/>
+                <Slider x:Name="SldVolume" Width="130" Minimum="0" Maximum="100" VerticalAlignment="Center"
+                        Margin="0,0,14,4" Thumb.DragCompleted="Volume_DragCompleted"
+                        ToolTip="TV volume for these videos (0–100)"/>
+                <Button x:Name="BtnStop" Content="■ _Back to playlist" Margin="0,0,6,4" Click="Stop_Click"
+                        ToolTip="Stop the video and let the TV go back to its normal rotation"
+                        ToolTipService.ShowOnDisabled="True"/>
+            </WrapPanel>
+            <TextBlock x:Name="LblStatus" Foreground="{StaticResource TextMuted}" Margin="0,4,0,0"/>
+        </StackPanel>
+
+        <!-- saved links -->
+        <GroupBox Header="Saved videos">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <DockPanel Grid.Row="0" Margin="0,0,0,4">
+                    <Button Content="+ _Add video…" DockPanel.Dock="Left" Click="Add_Click"
+                            ToolTip="Paste a YouTube link — the title and thumbnail are fetched for you"/>
+                    <TextBlock Text="Tick videos to play several in a row. Double-click plays one."
+                               Foreground="{StaticResource TextMuted}" FontSize="11"
+                               VerticalAlignment="Center" Margin="10,0,0,0"/>
+                </DockPanel>
+                <ListBox x:Name="LstBookmarks" Grid.Row="1" SelectionMode="Single"
+                         MouseDoubleClick="LstBookmarks_DoubleClick">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <DockPanel Margin="2">
+                                <CheckBox DockPanel.Dock="Left" IsChecked="{Binding IsChecked}"
+                                          VerticalAlignment="Center" Margin="0,0,6,0"
+                                          ToolTip="Tick videos, then 'Play ticked' below"/>
+                                <Grid DockPanel.Dock="Left" Width="48" Height="32" Margin="0,0,8,0">
+                                    <TextBlock Text="▶" FontSize="18" Foreground="{StaticResource TextMuted}"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Thumb}" Value="{x:Null}">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <Image Source="{Binding Thumb}" Stretch="Uniform"/>
+                                </Grid>
+                                <Button DockPanel.Dock="Right" Content="✕" Style="{StaticResource SmallButton}"
+                                        Click="Remove_Click" VerticalAlignment="Center" Margin="4,0,0,0"
+                                        ToolTip="Remove this video from the list"/>
+                                <Button DockPanel.Dock="Right" Content="▼" Style="{StaticResource SmallButton}"
+                                        Click="MoveDown_Click" VerticalAlignment="Center" Margin="4,0,0,0"
+                                        ToolTip="Move down — ticked videos play in list order"/>
+                                <Button DockPanel.Dock="Right" Content="▲" Style="{StaticResource SmallButton}"
+                                        Click="MoveUp_Click" VerticalAlignment="Center" Margin="8,0,0,0"
+                                        ToolTip="Move up — ticked videos play in list order"/>
+                                <TextBlock DockPanel.Dock="Right" Text="▶ playing" VerticalAlignment="Center"
+                                           Foreground="{StaticResource Success}" Margin="8,0,0,0">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsPlaying}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Display}" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Text="{Binding Author}" FontSize="11"
+                                               Foreground="{StaticResource TextMuted}"
+                                               TextTrimming="CharacterEllipsis"/>
+                                </StackPanel>
+                            </DockPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                <TextBlock Grid.Row="1" Text="No videos saved yet.&#10;Click '+ Add video…' and paste a YouTube link."
+                           Foreground="{StaticResource TextMuted}" TextAlignment="Center" TextWrapping="Wrap"
+                           HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Items.Count, ElementName=LstBookmarks}" Value="0">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </Grid>
+        </GroupBox>
+    </DockPanel>
+    <local:Toast x:Name="Toaster" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,16,12"/>
+    </Grid>
+</Window>

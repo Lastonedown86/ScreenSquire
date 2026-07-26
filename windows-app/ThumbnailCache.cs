@@ -37,6 +37,29 @@ public static class ThumbnailCache
         catch { return null; }   // no thumbnail is fine — the glyph shows instead
     }
 
+    /// <summary>Thumbnail from an arbitrary https URL (YouTube video thumbs).</summary>
+    public static async Task<BitmapImage?> GetUrlAsync(string url)
+    {
+        try
+        {
+            var key = "url_" + Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(
+                    System.Text.Encoding.UTF8.GetBytes(url)))[..24] + ".png";
+            var path = Path.Combine(Dir, key);
+            if (File.Exists(path))
+                return Decode(await File.ReadAllBytesAsync(path));
+
+            var img = Decode(await Http.GetByteArrayAsync(url));
+            if (img == null) return null;
+            var enc = new PngBitmapEncoder();
+            enc.Frames.Add(BitmapFrame.Create(img));
+            Directory.CreateDirectory(Dir);
+            using (var fs = File.Create(path)) enc.Save(fs);
+            return img;
+        }
+        catch { return null; }   // no thumbnail is fine — the glyph shows instead
+    }
+
     public static void ClearDevice(SavedDevice device)
     {
         ArgumentNullException.ThrowIfNull(device);

@@ -51,6 +51,9 @@
 </style>
 </head>
 <body>
+  <!-- YouTube IFrame Player API — if it never loads (offline boot, blocked),
+       ytReady stays false and youtube items fall back to a muted embed -->
+  <script src="https://www.youtube.com/iframe_api" async></script>
   <div class="layer" id="idle"><div id="idleInner"><div class="dot"></div><div id="idleText">Ready — waiting for content</div></div></div>
   <div class="layer" id="a"></div>
   <div class="layer" id="b"></div>
@@ -66,11 +69,31 @@
   let currentId = null;     // avoid reloading the same item on reconnect
   let ws = null;
 
+  // ---- YouTube IFrame Player API state ----
+  let ytReady = false;
+  window.onYouTubeIframeAPIReady = () => { ytReady = true; };
+  let yt = null;            // {player, layer, videoId} while a player exists
+  let ytVolume = 100;       // last volume asked for; applied to new players
+
+  function sendYtState(state, videoId) {
+    if (ws && ws.readyState === 1)
+      ws.send(JSON.stringify({ type: 'yt-state', state: state, videoId: videoId }));
+  }
+
+  // players keep playing audio even after their element is detached —
+  // destroy explicitly whenever the layer holding one gets cleared
+  function destroyYtIn(layer) {
+    if (yt && yt.layer === layer) {
+      try { yt.player.destroy(); } catch (e) {}
+      yt = null;
+    }
+  }
+
   function show(msg) {
     if (msg.type === 'idle') {
       if (msg.name) document.getElementById('idleText').textContent =
         msg.name + ' — ready, waiting for content';
-      layers.forEach(l => { l.classList.remove('visible'); l.innerHTML = ''; });
+      layers.forEach(l => { destroyYtIn(l); l.classList.remove('visible'); l.innerHTML = ''; });
       idle.classList.add('visible');
       currentId = null;
       return;
@@ -80,8 +103,35 @@
     idle.classList.remove('visible');
 
     const back = layers[1 - front];
+    destroyYtIn(back);
     back.innerHTML = '';
     let el;
+    if (msg.type === 'youtube' && ytReady && window.YT && YT.Player) {
+      if (msg.volume != null) ytVolume = msg.volume;
+      const div = document.createElement('div');
+      back.appendChild(div);   // the API replaces this div with its own iframe
+      yt = { layer: back, videoId: msg.videoId, player: new YT.Player(div, {
+        videoId: msg.videoId,
+        playerVars: { autoplay: 1, controls: 0, rel: 0 },
+        events: {
+          onReady: (e) => {
+            e.target.setVolume(ytVolume);
+            e.target.unMute();           // embeds start muted in some states
+            e.target.playVideo();
+            swap(back);
+          },
+          onStateChange: (e) => {
+            const s = { [YT.PlayerState.PLAYING]: 'playing',
+                        [YT.PlayerState.PAUSED]: 'paused',
+                        [YT.PlayerState.ENDED]: 'ended' }[e.data];
+            if (s) sendYtState(s, msg.videoId);
+          },
+          onError: () => { sendYtState('error', msg.videoId); swap(back); },
+        },
+      })};
+      setTimeout(() => swap(back), 4000);  // same safety net as the url path
+      return;
+    }
     if (msg.type === 'image') {
       el = new Image();
       el.src = msg.src;
@@ -94,9 +144,13 @@
       el.autoplay = true; el.loop = true; el.playsInline = true;
       el.oncanplay = () => swap(back);
       el.onerror = () => swap(back);
-    } else if (msg.type === 'url') {
+    } else if (msg.type === 'url' || msg.type === 'youtube') {
+      // 'youtube' here means the Player API isn't available — muted embed fallback
       el = document.createElement('iframe');
-      el.src = msg.src;
+      el.src = msg.type === 'youtube'
+        ? 'https://www.youtube.com/embed/' + msg.videoId
+          + '?autoplay=1&mute=1&controls=0&loop=1&playlist=' + msg.videoId
+        : msg.src;
       el.sandbox = 'allow-scripts allow-same-origin allow-forms allow-presentation';
       // let embeds autoplay video + play DRM audio (YouTube, Spotify, etc.)
       el.allow = 'autoplay; encrypted-media; fullscreen; picture-in-picture';
@@ -114,13 +168,31 @@
     old.classList.remove('visible');
     front = 1 - front;
     // free the old media after the fade so videos stop downloading/decoding
-    setTimeout(() => { if (!old.classList.contains('visible')) old.innerHTML = ''; }, 600);
+    // (and kill any YouTube player left there, or its audio keeps going)
+    setTimeout(() => {
+      if (!old.classList.contains('visible')) { destroyYtIn(old); old.innerHTML = ''; }
+    }, 600);
   }
 
   function connect() {
     ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
     ws.onopen = () => { offline.style.display = 'none'; };
-    ws.onmessage = (e) => { try { show(JSON.parse(e.data)); } catch {} };
+    ws.onmessage = (e) => {
+      let m; try { m = JSON.parse(e.data); } catch { return; }
+      if (m.type === 'yt-control') {          // transport command, not content
+        if (m.action === 'volume' && m.value != null) ytVolume = m.value;
+        const p = yt && yt.player;
+        if (!p) return;
+        try {
+          if (m.action === 'pause') p.pauseVideo();
+          else if (m.action === 'play') { p.unMute(); p.playVideo(); }
+          else if (m.action === 'volume') p.setVolume(ytVolume);
+          else if (m.action === 'seek') p.seekTo(p.getCurrentTime() + m.value, true);
+        } catch (err) {}
+        return;
+      }
+      try { show(m); } catch {}
+    };
     ws.onclose = () => {
       offline.style.display = 'block';
       setTimeout(connect, 2000);                  // retry forever

@@ -174,6 +174,21 @@ public class ApiClient : IDisposable
         await ThrowIfError(resp);
     }
 
+    /// <summary>Drives the kiosk's YouTube player: action = play | pause | seek | volume.</summary>
+    public async Task YouTubeControlAsync(
+        string action,
+        int? value,
+        ControlContext context)
+    {
+        var body = JsonSerializer.SerializeToUtf8Bytes(new { action, value }, JsonOpts);
+        using var resp = await SendJsonAsync(
+            HttpMethod.Post,
+            "/api/youtube/control",
+            body,
+            context);
+        await ThrowIfError(resp);
+    }
+
     public Task<KioskState?> GetKioskAsync() => _http.GetFromJsonAsync<KioskState>("/api/kiosk");
 
     public async Task<bool> SetKioskAsync(

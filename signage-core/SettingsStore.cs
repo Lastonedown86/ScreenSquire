@@ -34,6 +34,20 @@ public sealed class AppSettings
     public List<string> SignageDeviceIds { get; set; } = new();
     // Capture boards shown in the board picker (display names as the client typed them).
     public List<string> Boards { get; set; } = new() { "pairings", "standings" };
+    // Saved YouTube links for the bookmarks window; queue plays in list order.
+    public List<YouTubeBookmark> YouTubeBookmarks { get; set; } = new();
+    // Last volume set from the bookmarks window; sent with each play.
+    public int YouTubeVolume { get; set; } = 100;
+}
+
+public sealed class YouTubeBookmark
+{
+    public string VideoId { get; set; } = "";
+    public string Url { get; set; } = "";
+    // Fetched via oEmbed at add time; null when the fetch failed (offline etc.)
+    public string? Title { get; set; }
+    public string? AuthorName { get; set; }
+    public string? ThumbnailUrl { get; set; }
 }
 
 // Same shape as DeviceStore: JSON in %AppData%\PiSignage, corrupt -> defaults,
