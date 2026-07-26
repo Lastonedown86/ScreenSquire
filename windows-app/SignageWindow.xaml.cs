@@ -156,9 +156,11 @@ public partial class SignageWindow : Window
                 Content = $"{min} min",
                 Padding = new Thickness(8, 2, 8, 2),
                 Margin = new Thickness(4, 0, 0, 0),
-                ToolTip = $"Start a {min}-minute round with one click",
+                ToolTip = $"Set the round length to {min} minutes — click Start to begin",
             };
-            b.Click += (_, e) => { TxtMinutes.Text = min.ToString(); StartTimer_Click(b, e); };
+            // presets only fill the length; Start (or Next round) is the one thing
+            // that starts a clock, so a stray click can't restart a live round
+            b.Click += (_, _) => TxtMinutes.Text = min.ToString();
             Presets.Children.Add(b);
         }
         LoadBoards();
@@ -486,9 +488,10 @@ public partial class SignageWindow : Window
                     DashboardPayload.Build(_state, _timer),
                     t.ControlContext);
             });
+            // Status carries the outcome; toast only interrupts for problems
             Status.Text = result.Summary();
-            Toaster.Show(result.Summary(),
-                result.AllFailed ? ToastKind.Error : result.Failed.Count > 0 ? ToastKind.Warning : ToastKind.Success);
+            if (result.Failed.Count > 0)
+                Toaster.Show(result.Summary(), result.AllFailed ? ToastKind.Error : ToastKind.Warning);
             if (!result.AllFailed)
             {
                 App.Settings.Regions[slot] = new PiSignage.Signage.RegionRect { X = r.x, Y = r.y, W = r.w, H = r.h };

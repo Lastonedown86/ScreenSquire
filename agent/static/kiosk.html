@@ -122,10 +122,13 @@
       layers.forEach(l => { destroyYtIn(l); destroySpIn(l); l.classList.remove('visible'); l.innerHTML = ''; });
       idle.classList.add('visible');
       currentId = null;
+      showsFullTimer = false;
       return;
     }
     if (msg.id && msg.id === currentId) return;   // already showing it
     currentId = msg.id || null;
+    // content that IS a fullscreen timer page makes the corner overlay redundant
+    showsFullTimer = msg.type === 'url' && /[?&]view=timer\b/.test(msg.src || '');
     idle.classList.remove('visible');
 
     const back = layers[1 - front];
@@ -295,6 +298,7 @@
   const tVal = document.getElementById('timerVal');
   const tLbl = document.getElementById('timerLbl');
   let tState = null, tEndsAt = null, tPausedRem = null, tLabel = '';
+  let showsFullTimer = false;   // set by show(): current item is /dashboard?view=timer
 
   async function pollTimer() {
     try {
@@ -314,7 +318,7 @@
     let rem = null;
     if (tState === 'running' && tEndsAt != null) rem = (tEndsAt - Date.now()) / 1000;
     else if (tState === 'paused') rem = tPausedRem;
-    if (rem == null) { tOverlay.style.display = 'none'; return; }
+    if (rem == null || showsFullTimer) { tOverlay.style.display = 'none'; return; }
     tOverlay.style.display = 'block';
     tOverlay.classList.toggle('over', rem <= 0);
     tVal.textContent = rem <= 0 ? 'TIME' : fmtT(rem);

@@ -22,6 +22,8 @@ public partial class MainWindow : Window
         new(new DpapiSecretProtector());
     private PiSignage.Signage.ControlContext? _connectedControlContext;
     private System.Collections.Generic.List<PiSignage.Signage.SavedDevice> _devices = new();
+    private DeviceSetupWindow? _setupDlg;   // non-null only while the modal is open
+    private bool _updateAvailable;   // BtnUpdatePi lives in the dialog now; remembered between opens
 
     public MainWindow()
     {
@@ -208,12 +210,36 @@ public partial class MainWindow : Window
 
     // Rename/Forget only make sense for a saved device that's actually selected.
     private void CmbAddress_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        => SyncSetupDialogState();
+
+    // The setup/management buttons live in the modal DeviceSetupWindow; MainWindow
+    // owns all device state, so it drives the dialog's enabled/visible state here.
+    // Called on selection changes and by the 3s poll, both of which keep firing
+    // inside ShowDialog's nested message loop while the dialog is open.
+    private void SyncSetupDialogState()
     {
+        if (_setupDlg == null) return;
         bool isSaved = CmbAddress.SelectedItem is PiSignage.Signage.SavedDevice;
-        if (BtnRename != null) BtnRename.IsEnabled = isSaved;
-        if (BtnForget != null) BtnForget.IsEnabled = isSaved;
-        if (BtnPrepareDelivery != null)
-            BtnPrepareDelivery.IsEnabled = CanPrepareSelectedDevice();
+        _setupDlg.BtnRename.IsEnabled = isSaved;
+        _setupDlg.BtnForget.IsEnabled = isSaved;
+        _setupDlg.BtnPrepareDelivery.IsEnabled = CanPrepareSelectedDevice();
+        _setupDlg.BtnUpdatePi.Visibility = _updateAvailable && _api != null
+            ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void BtnDeviceSetup_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new DeviceSetupWindow { Owner = this };
+        dlg.BtnScan.Click += BtnScan_Click;
+        dlg.BtnRename.Click += BtnRename_Click;
+        dlg.BtnForget.Click += BtnForget_Click;
+        dlg.BtnSetupNew.Click += AddPi_Click;
+        dlg.BtnUpdatePi.Click += BtnUpdatePi_Click;
+        dlg.BtnPrepareDelivery.Click += BtnPrepareDelivery_Click;
+        _setupDlg = dlg;
+        SyncSetupDialogState();
+        try { dlg.ShowDialog(); } finally { _setupDlg = null; }
+        Activate();
     }
 
     private bool CanPrepareSelectedDevice() =>
@@ -355,7 +381,8 @@ public partial class MainWindow : Window
 
     async void AddPi_Click(object sender, System.Windows.RoutedEventArgs e)
     {
-        var wizard = new WifiSetupWindow { Owner = this };
+        // Stack on the setup dialog when launched from it, so the modals layer right.
+        var wizard = new WifiSetupWindow { Owner = _setupDlg ?? (Window)this };
         wizard.ShowDialog();   // modal: no concurrent device-file writes
         Activate();
         ReloadDevices();   // show the newly-provisioned Pi
@@ -421,7 +448,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        BtnPrepareDelivery.IsEnabled = false;
+        var btn = (Button)sender;   // lives in DeviceSetupWindow
+        btn.IsEnabled = false;
         SetBusy(true);
         try
         {
@@ -467,6 +495,8 @@ public partial class MainWindow : Window
             BtnRemote.IsEnabled = false;
             BtnKiosk.Content = "_TV display on/off";
             LblStatus.Text = "Ready for delivery — unplug the USB cable.";
+            _updateAvailable = false;   // no _api anymore; hide Update in the open dialog
+            SyncSetupDialogState();
             try
             {
                 oldApi?.Dispose();
@@ -527,7 +557,7 @@ public partial class MainWindow : Window
         finally
         {
             SetBusy(false);
-            BtnPrepareDelivery.IsEnabled = CanPrepareSelectedDevice();
+            btn.IsEnabled = CanPrepareSelectedDevice();
         }
     }
 
@@ -658,7 +688,8 @@ public partial class MainWindow : Window
     {
         var bundled = AgentBundle.Version();
         if (bundled == null || _api == null) return;
-        BtnUpdatePi.IsEnabled = false;
+        var btn = (Button)sender;   // lives in DeviceSetupWindow
+        btn.IsEnabled = false;
         try
         {
             Toaster.Show("Updating your Pi — the TV will blink once. This takes about half a minute…");
@@ -708,13 +739,14 @@ public partial class MainWindow : Window
         {
             Toaster.Show("Couldn't update your Pis: " + ex.Message, ToastKind.Error);
         }
-        finally { BtnUpdatePi.IsEnabled = true; }
+        finally { btn.IsEnabled = true; }
     }
 
     private async void BtnScan_Click(object sender, RoutedEventArgs e)
     {
-        BtnScan.IsEnabled = false;
-        BtnScan.Content = "Looking…";
+        var btn = (Button)sender;   // lives in DeviceSetupWindow
+        btn.IsEnabled = false;
+        btn.Content = "Looking…";
         try
         {
             int foundCount = 0;
@@ -742,6 +774,7 @@ public partial class MainWindow : Window
             }
             SaveDevices();
             ReloadDevices();
+            SyncSetupDialogState();   // a found Pi can newly enable Rename/Remove
             _ = ProbeDevicesAsync();
             if (foundCount == 0)
                 Toaster.Show("No Pis found. Check the Pi is powered on and on the same WiFi, then try again — or use 'Set up a new Pi'.", ToastKind.Warning);
@@ -751,8 +784,8 @@ public partial class MainWindow : Window
         catch (System.Exception ex) { Toaster.Show("Search failed: " + ex.Message, ToastKind.Error); }
         finally
         {
-            BtnScan.IsEnabled = true;
-            BtnScan.Content = "_Find my Pi";
+            btn.IsEnabled = true;
+            btn.Content = "_Find my Pi";
         }
     }
 
@@ -772,15 +805,16 @@ public partial class MainWindow : Window
                 "url" => $"Now: {FriendlyUrlLabel(s.NowShowing.Src)}",
                 _ => $"Now: {s.NowShowing.Type} {System.IO.Path.GetFileName(s.NowShowing.Src ?? "")}"
             };
-            BtnUpdatePi.Visibility =
-                AgentBundle.Version() is string bundled && s.AgentVersion != bundled
-                    ? Visibility.Visible : Visibility.Collapsed;
+            _updateAvailable =
+                AgentBundle.Version() is string bundled && s.AgentVersion != bundled;
+            SyncSetupDialogState();
         }
         catch
         {
             LblStatus.Text = "Lost connection to the Pi — trying to reconnect…";
             if (CmbAddress.SelectedItem is PiSignage.Signage.SavedDevice off) off.Online = false;
-            BtnUpdatePi.Visibility = Visibility.Collapsed;
+            _updateAvailable = false;
+            SyncSetupDialogState();
         }
     }
 
