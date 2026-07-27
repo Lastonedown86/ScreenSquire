@@ -192,6 +192,135 @@ public class AgentUpdaterTests
                 timeout: TimeSpan.FromMilliseconds(50), pollDelay: TimeSpan.Zero));
     }
 
+    static SavedDevice Device(string name, string ip, string deviceId = "dev") =>
+        new() { DeviceId = deviceId, Name = name, Ip = ip, Port = 8080 };
+
+    // One Pi per host: "current" is already up to date, "ahead" is newer than
+    // this exe, "dead" refuses connections, "broken" accepts the upload and
+    // never comes back, anything else starts out of date and reports the new
+    // version once it has been updated.
+    static FakeHandler FleetHandler()
+    {
+        var restarted = new HashSet<string>();
+        return new FakeHandler
+        {
+            Respond = req =>
+            {
+                var host = req.RequestUri!.Host;
+                if (host == "dead") throw new HttpRequestException("no route to host");
+                if (req.RequestUri.AbsolutePath == "/api/update")
+                {
+                    if (host != "broken") restarted.Add(host);
+                    return Json("{\"ok\": true}");
+                }
+                return host switch
+                {
+                    "current" => Json("{\"agent_version\": \"2026.07.26.9\"}"),
+                    "ahead" => Json("{\"agent_version\": \"2026.08.01.1\"}"),
+                    _ => Json(restarted.Contains(host)
+                        ? "{\"agent_version\": \"2026.07.26.9\"}"
+                        : "{\"agent_version\": \"2026.07.26.8\"}"),
+                };
+            },
+        };
+    }
+
+    static Task<FleetResult> PushFleet(
+        HttpClient http, IEnumerable<SavedDevice> devices, string bundled,
+        Func<string, ControlContext?>? resolve = null) =>
+        AgentUpdater.PushFleetAsync(
+            http, devices, resolve ?? (_ => Context()), new byte[] { 1 }, bundled,
+            timeout: TimeSpan.FromMilliseconds(50), pollDelay: TimeSpan.Zero);
+
+    [Fact]
+    public async Task PushFleetAsync_sorts_every_pi_into_the_right_bucket()
+    {
+        using var http = new HttpClient(FleetHandler());
+        var devices = new[]
+        {
+            Device("Front", "old"),
+            Device("Back", "current"),
+            Device("Bar", "dead"),
+            Device("Patio", "nocreds", deviceId: "unpaired"),
+            Device("Lobby", "broken"),
+        };
+
+        var r = await PushFleet(http, devices, "2026.07.26.9",
+            resolve: id => id == "unpaired" ? null : Context());
+
+        Assert.Equal(new[] { "Front" }, r.Updated);
+        Assert.Equal(new[] { "Back" }, r.AlreadyCurrent);
+        Assert.Equal(new[] { "Bar" }, r.Unreachable);
+        Assert.Equal(new[] { "Patio" }, r.Unpaired);
+        Assert.Equal(new[] { "Lobby" }, r.Failed.Select(f => f.Name));
+        Assert.False(r.Settled);
+    }
+
+    [Fact]
+    public async Task PushFleetAsync_never_pushes_when_the_pi_is_ahead_of_this_exe()
+    {
+        var handler = FleetHandler();
+        using var http = new HttpClient(handler);
+
+        var r = await PushFleet(http, new[] { Device("Front", "ahead") }, "2026.07.26.9");
+
+        Assert.Equal(new[] { "Front" }, r.AlreadyCurrent);
+        Assert.Empty(r.Updated);
+        Assert.DoesNotContain(handler.Requests, req => req.Contains("/api/update"));
+        Assert.True(r.Settled);
+    }
+
+    [Fact]
+    public async Task PushFleetAsync_ignores_devices_that_were_never_discovered()
+    {
+        var handler = FleetHandler();
+        using var http = new HttpClient(handler);
+
+        var r = await PushFleet(http, new[] { Device("Ghost", "") }, "2026.07.26.9");
+
+        Assert.Empty(handler.Requests);
+        Assert.Empty(r.Updated);
+        Assert.Empty(r.Unreachable);
+        Assert.Equal("There are no TVs to update.", r.Summary());
+    }
+
+    [Fact]
+    public async Task PushFleetAsync_is_settled_only_when_nothing_is_worth_retrying()
+    {
+        // A fresh handler per sweep: "has this host been updated yet" is state,
+        // and sharing it would let one sweep answer the next one's probe.
+        using var a = new HttpClient(FleetHandler());
+        var updated = await PushFleet(a, new[] { Device("Front", "old") }, "2026.07.26.9");
+        Assert.True(updated.Settled);
+        Assert.Equal("Front updated.", updated.Summary());
+
+        // An unpaired Pi is a dead end, not a retry: it must not hold the sweep open.
+        using var b = new HttpClient(FleetHandler());
+        var unpaired = await PushFleet(b, new[] { Device("Patio", "old") }, "2026.07.26.9",
+            resolve: _ => null);
+        Assert.Equal(new[] { "Patio" }, unpaired.Unpaired);
+        Assert.True(unpaired.Settled);
+
+        using var c = new HttpClient(FleetHandler());
+        var off = await PushFleet(c, new[] { Device("Bar", "dead") }, "2026.07.26.9");
+        Assert.False(off.Settled);
+        Assert.Equal(
+            "Bar was switched off, and will update automatically once back on.",
+            off.Summary());
+    }
+
+    [Fact]
+    public void FleetResult_summary_reads_as_a_sentence_for_several_pis()
+    {
+        var r = new FleetResult();
+        r.Updated.AddRange(new[] { "Front", "Back", "Bar" });
+        r.Unreachable.AddRange(new[] { "Patio", "Lobby" });
+        Assert.Equal(
+            "Front, Back and Bar updated. " +
+            "Patio and Lobby were switched off, and will update automatically once back on.",
+            r.Summary());
+    }
+
     static string Header(HttpRequestMessage request, string name) =>
         request.Headers.GetValues(name).Single();
 
