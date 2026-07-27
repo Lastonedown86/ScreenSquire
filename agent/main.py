@@ -63,7 +63,7 @@ PLAYLIST_FILE = DATA_DIR / "playlist.json"
 PORT = int(os.environ.get("SIGNAGE_PORT", "8080"))
 NAME_FILE = DATA_DIR / "name.txt"
 TRUST_FILE = DATA_DIR / "trust.json"
-AGENT_VERSION = "2026.07.26.8"  # bump on every agent change; the app compares this
+AGENT_VERSION = "2026.07.26.9"  # bump on every agent change; the app compares this
 
 
 def _load_name() -> str:

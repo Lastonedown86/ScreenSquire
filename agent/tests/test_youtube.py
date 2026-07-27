@@ -1,6 +1,30 @@
 import asyncio
 import json
+import re
 import time
+from pathlib import Path
+
+KIOSK_HTML = Path(__file__).resolve().parents[1] / "static" / "kiosk.html"
+
+
+def test_kiosk_clears_the_caption_track_when_the_module_loads():
+    """Captions only stay off if the track is cleared from onApiChange:
+    the captions module does not exist at onReady, and unloadModule() on it
+    does not work. Verified against the real player; guard the wiring."""
+    html = KIOSK_HTML.read_text(encoding="utf-8")
+    handler = re.search(r"onApiChange:.*?\n\s*\},", html, re.S)
+    assert handler, "kiosk lost its onApiChange handler"
+    assert "setOption('captions', 'track', {})" in handler.group(0)
+
+
+def test_kiosk_waits_for_the_player_api_before_falling_back():
+    """The hub pushes content the instant a screen connects, so at boot the item
+    beats the async API script. Without this hold, youtube items land on the
+    fallback embed, which plays muted and cannot turn captions off."""
+    html = KIOSK_HTML.read_text(encoding="utf-8")
+    assert "ytPending = msg" in html
+    assert "if (ytPending) { const m = ytPending; ytPending = null; show(m); }" in html
+
 
 
 def _reset_override(agent_module):
