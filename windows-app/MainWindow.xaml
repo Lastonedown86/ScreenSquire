@@ -17,6 +17,22 @@
         <!-- ============ header: connect bar + daily launchers ============ -->
         <Border Grid.Row="0" Background="{StaticResource CardBg}" Padding="10,8" BorderBrush="{StaticResource Border}" BorderThickness="0,0,0,1">
             <StackPanel>
+            <!-- Update banner. Nothing is ever required of the user: the update is
+                 already downloaded and applies itself at the next launch. This only
+                 offers to bring that forward. -->
+            <Border x:Name="PnlUpdateBanner" Visibility="Collapsed"
+                    Background="{StaticResource Accent}" CornerRadius="4"
+                    Padding="10,6" Margin="0,0,0,8">
+                <DockPanel>
+                    <Button x:Name="BtnRestartForUpdate" DockPanel.Dock="Right"
+                            Content="Restart now" Margin="8,0,0,0"
+                            Click="BtnRestartForUpdate_Click"
+                            ToolTip="Close and reopen the app to finish updating now"/>
+                    <TextBlock x:Name="LblUpdateBanner" VerticalAlignment="Center"
+                               TextWrapping="Wrap" Foreground="White"/>
+                </DockPanel>
+            </Border>
+
             <!-- row 1: connect bar. Gear stays pinned top-right; the rest wraps to a
                  second line when narrow instead of clipping; device actions
                  stay disabled until a device is selected/connected -->

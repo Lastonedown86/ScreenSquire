@@ -1,3 +1,9 @@
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
+using System.Threading;
 using System.Windows;
 using PiSignage.Signage;
 
@@ -6,6 +12,18 @@ namespace PiSignage.Control;
 public partial class App : Application
 {
     public static AppSettings Settings { get; } = new SettingsStore().Load();
+
+    /// <summary>This build's version. 0.0.0 means nobody stamped it, i.e. a
+    /// developer build, which never self-updates.</summary>
+    public static Version CurrentVersion =>
+        typeof(App).Assembly.GetName().Version ?? AppUpdate.DevBuild;
+
+    /// <summary>Sits beside devices.json and settings.json.</summary>
+    public static string UpdateStageDir { get; } = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "PiSignage", "updates");
+
+    public static string ExePath { get; } = Environment.ProcessPath ?? "";
 
     public static void SaveSettings()
     {
@@ -37,6 +55,15 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        // A freshly downloaded build is launched with this flag before anything is
+        // swapped. Exiting 0 is the whole test: it proves the binary actually
+        // starts on this machine -- not truncated, not quarantined by antivirus.
+        if (e.Args.Contains("--selftest"))
+        {
+            Shutdown(0);
+            return;
+        }
+
         base.OnStartup(e);
         DispatcherUnhandledException += (_, args) =>
         {
@@ -45,5 +72,47 @@ public partial class App : Application
                 "Pi Signage Control", MessageBoxButton.OK, MessageBoxImage.Error);
             args.Handled = true;
         };
+
+        ApplyPendingUpdate();
     }
+
+    // Runs before any window: swapping the exe is a file rename, and doing it
+    // first means the user only ever sees the version they end up running.
+    void ApplyPendingUpdate()
+    {
+        if (string.IsNullOrEmpty(ExePath)) return;
+
+        // Two copies of the app can be open at once, and both reach this line.
+        using var mutex = new Mutex(false, @"Local\PiSignageControl.Update." + PathKey(ExePath));
+        var held = false;
+        try { held = mutex.WaitOne(TimeSpan.FromSeconds(5)); }
+        catch (AbandonedMutexException) { held = true; }   // holder died mid-swap
+        if (!held) return;
+
+        try
+        {
+            switch (AppUpdateInstaller.TryApplyPending(ExePath, UpdateStageDir, CurrentVersion))
+            {
+                case AppUpdateInstaller.Outcome.Applied:
+                    Process.Start(new ProcessStartInfo(ExePath) { UseShellExecute = true });
+                    Shutdown();
+                    return;
+                case AppUpdateInstaller.Outcome.Nothing:
+                    // Nothing waiting, so this build is the settled one and the
+                    // previous version beside it is no longer needed.
+                    AppUpdateInstaller.CommitPreviousLaunch(ExePath);
+                    return;
+                default:
+                    return;   // blocked; next launch tries again
+            }
+        }
+        catch { /* never let an update failure stop the app from opening */ }
+        finally { try { mutex.ReleaseMutex(); } catch { } }
+    }
+
+    // Mutex names cannot contain a path separator, and the install location is
+    // what two instances actually contend over.
+    static string PathKey(string path) =>
+        Convert.ToHexString(SHA256.HashData(
+            Encoding.UTF8.GetBytes(path.ToLowerInvariant())))[..16];
 }
