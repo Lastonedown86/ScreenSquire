@@ -142,10 +142,13 @@
       back.appendChild(div);   // the API replaces this div with its own iframe
       yt = { layer: back, videoId: msg.videoId, player: new YT.Player(div, {
         videoId: msg.videoId,
-        playerVars: { autoplay: 1, controls: 0, rel: 0 },
+        playerVars: { autoplay: 1, controls: 0, rel: 0, cc_load_policy: 0 },
         events: {
           onReady: (e) => {
             e.target.setVolume(ytVolume);
+            // cc_load_policy=0 only means "user preference" — this is the real
+            // off switch ('captions' = old player, 'cc' = HTML5 player)
+            try { e.target.unloadModule('captions'); e.target.unloadModule('cc'); } catch (e) {}
             e.target.unMute();           // embeds start muted in some states
             e.target.playVideo();
             swap(back);
@@ -226,8 +229,10 @@
       // 'youtube' here means the Player API isn't available — muted embed fallback
       el = document.createElement('iframe');
       el.src = msg.type === 'youtube'
+        // ponytail: cc_load_policy=0 is only a hint — no player handle here to
+        // unloadModule('cc') the way the API path does
         ? 'https://www.youtube.com/embed/' + msg.videoId
-          + '?autoplay=1&mute=1&controls=0&loop=1&playlist=' + msg.videoId
+          + '?autoplay=1&mute=1&controls=0&loop=1&cc_load_policy=0&playlist=' + msg.videoId
         : msg.src;
       el.sandbox = 'allow-scripts allow-same-origin allow-forms allow-presentation';
       // let embeds autoplay video + play DRM audio (YouTube, Spotify, etc.)

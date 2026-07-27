@@ -63,7 +63,7 @@ PLAYLIST_FILE = DATA_DIR / "playlist.json"
 PORT = int(os.environ.get("SIGNAGE_PORT", "8080"))
 NAME_FILE = DATA_DIR / "name.txt"
 TRUST_FILE = DATA_DIR / "trust.json"
-AGENT_VERSION = "2026.07.26.7"  # bump on every agent change; the app compares this
+AGENT_VERSION = "2026.07.26.8"  # bump on every agent change; the app compares this
 
 
 def _load_name() -> str:
@@ -270,7 +270,7 @@ def _normalize_url(src: str) -> str:
         return src
     # mute: Chromium only autoplays muted video without a user gesture
     return (f"https://www.youtube.com/embed/{vid}"
-            f"?autoplay=1&mute=1&controls=0&loop=1&playlist={vid}")
+            f"?autoplay=1&mute=1&controls=0&loop=1&cc_load_policy=0&playlist={vid}")
 
 
 def _item_payload(item: PlaylistItem) -> dict:
