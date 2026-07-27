@@ -21,6 +21,38 @@ public class AgentUpdaterTests
         Assert.Null(AgentUpdater.ParseVersion("PORT = 8080\n"));
     }
 
+    [Theory]
+    // bundled,        installed,       expected
+    [InlineData("2026.07.26.8", "2026.07.26.7", true)]   // ordinary update
+    [InlineData("2026.07.26.7", "2026.07.26.8", false)]  // Pi is ahead — never downgrade
+    [InlineData("2026.07.26.7", "2026.07.26.7", false)]  // already current
+    [InlineData("2026.08.01.1", "2026.07.26.9", true)]   // N resets on a new day
+    [InlineData("2026.07.26.10", "2026.07.26.9", true)]  // numeric, not lexical
+    [InlineData("2026.07.26.7", "2026.7.26.7", false)]   // padding is not significance
+    [InlineData("2026.07.26.7", null, true)]             // agent predates AGENT_VERSION
+    [InlineData("2026.07.26.7", "", true)]
+    [InlineData("2026.07.26.7", "not-a-version", true)]
+    [InlineData(null, "2026.07.26.7", false)]            // no bundle to offer
+    [InlineData("not-a-version", "2026.07.26.7", false)]
+    [InlineData(null, null, false)]
+    public void IsNewer_orders_versions_and_never_downgrades(
+        string? bundled, string? installed, bool expected)
+    {
+        Assert.Equal(expected, AgentUpdater.IsNewer(bundled, installed));
+    }
+
+    [Fact]
+    public void IsNewer_accepts_the_version_this_exe_actually_ships()
+    {
+        // Guards the format contract between agent/main.py and the app: if
+        // AGENT_VERSION ever stops parsing, IsNewer silently answers "no update
+        // available" for every Pi forever.
+        var bundled = PiSignage.Control.AgentBundle.Version();
+        Assert.NotNull(bundled);
+        Assert.True(AgentUpdater.IsNewer(bundled, "0.0.0.1"));
+        Assert.False(AgentUpdater.IsNewer(bundled, bundled));
+    }
+
     [Fact]
     public void BuildZip_roundtrips_entries()
     {

@@ -15,6 +15,20 @@ public static class AgentUpdater
         return m.Success ? m.Groups[1].Value : null;
     }
 
+    /// <summary>Does the bundle inside this exe supersede what the Pi is running?
+    /// Deliberately an ordering test, not string inequality: a laptop carrying an
+    /// older exe would otherwise offer a perfectly current Pi a silent downgrade.
+    /// AGENT_VERSION is CalVer (YYYY.MM.DD.N), which System.Version orders
+    /// correctly, and zero-padding does not survive parsing either way.</summary>
+    public static bool IsNewer(string? bundled, string? installed)
+    {
+        // Nothing to offer: no bundle, or a version this build cannot interpret.
+        if (!Version.TryParse(bundled, out var b)) return false;
+        // An agent old enough to predate AGENT_VERSION always needs the update.
+        if (!Version.TryParse(installed, out var i)) return true;
+        return b > i;
+    }
+
     public static byte[] BuildZip(IReadOnlyDictionary<string, byte[]> files)
     {
         using var ms = new MemoryStream();

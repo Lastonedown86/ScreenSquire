@@ -5,6 +5,7 @@ Describe the focused change and why it is needed.
 ## Verification
 
 - [ ] Python agent tests pass, or this change cannot affect Python.
+- [ ] `AGENT_VERSION` is bumped, or no file that ships to a Pi changed.
 - [ ] .NET tests and Release build pass, or this change cannot affect .NET.
 - [ ] Changed Raspberry Pi shell scripts pass `bash -n`.
 - [ ] Real-Pi claims are backed by observed hardware evidence.

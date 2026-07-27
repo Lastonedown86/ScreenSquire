@@ -1,4 +1,5 @@
 import io
+import re
 import stat
 import warnings
 import zipfile
@@ -29,6 +30,12 @@ def test_status_reports_agent_version(agent_module, client):
     body = client.get("/api/status").json()
     assert body["agent_version"] == agent_module.AGENT_VERSION
     assert agent_module.AGENT_VERSION
+
+
+def test_agent_version_is_zero_padded_calver(agent_module):
+    """The app orders versions with System.Version, and CI derives release tags
+    from this format. A stray suffix or a dropped zero breaks both."""
+    assert re.fullmatch(r"\d{4}\.\d{2}\.\d{2}\.\d+", agent_module.AGENT_VERSION)
 
 
 def _zip_entry_bytes(entries: list[tuple[str, str]]) -> bytes:

@@ -25,6 +25,18 @@ dotnet build PiSignage.slnx -c Release
 Validate each file in `pi-setup/` with `bash -n` when setup scripts change.
 Real-Pi behavior must not be marked verified without observed hardware results.
 
+## Changing the agent
+
+Bump `AGENT_VERSION` in `agent/main.py` whenever you change a file that ships to
+a Pi — that is `main.py`, `trust.py`, `control_auth.py`, `delivery_reset.py`, and
+anything under `agent/static/`. The app decides a Pi is out of date by comparing
+this value, so an unbumped fix installs correctly and then reaches no Pi that is
+already running that version. CI enforces this on pull requests.
+
+The format is zero-padded CalVer, `YYYY.MM.DD.N`, with `N` starting at 1 and
+incrementing for a second change on the same day. Tests, docs, and
+`requirements.txt` are not part of the pushed bundle and need no bump.
+
 ## Pull requests
 
 Create a branch, make focused commits, and open a pull request into `main`.

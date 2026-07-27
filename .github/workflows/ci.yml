@@ -71,5 +71,40 @@ jobs:
           for script in pi-setup/*.sh; do
             bash -n "$script"
           done
+      # A shipped agent change without a version bump installs fine and then does
+      # nothing: the app compares AGENT_VERSION to decide whether a Pi is out of
+      # date, so an unbumped fix is invisible to every Pi already on that version.
+      - name: Require an AGENT_VERSION bump when shipped agent files change
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          base="origin/${{ github.base_ref }}"
+          # Only files that actually reach a Pi. Tests are never embedded, docs
+          # and requirements are not part of the pushed bundle (they need a
+          # builder deployment), but static/** ships and must force a bump.
+          relevant=$(git diff --name-only "$base...HEAD" -- agent/ | grep -Ev \
+            '^agent/(tests/|test_[^/]*\.py$|.*\.md$|requirements(-dev)?\.txt$)' || true)
+          if [ -z "$relevant" ]; then
+            echo "No shipped agent files changed."
+            exit 0
+          fi
+          echo "Shipped agent files changed:"
+          printf '  %s\n' $relevant
+          # Not anchored to end of line: AGENT_VERSION carries a trailing comment,
+          # and a Windows checkout would leave a CR there too.
+          extract() { sed -n 's/^AGENT_VERSION = "\([^"]*\)".*/\1/p'; }
+          old=$(git show "$base:agent/main.py" | extract)
+          new=$(extract < agent/main.py)
+          if [ -z "$new" ]; then
+            echo "Could not read AGENT_VERSION from agent/main.py"
+            exit 1
+          fi
+          if [ "$old" = "$new" ]; then
+            echo "AGENT_VERSION is still $new."
+            echo "Bump it in agent/main.py or these changes will never reach a Pi."
+            exit 1
+          fi
+          echo "AGENT_VERSION $old -> $new"
+
       - name: Check repository whitespace
         run: git log --check --oneline --all
