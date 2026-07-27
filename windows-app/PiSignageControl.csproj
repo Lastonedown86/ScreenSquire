@@ -10,6 +10,12 @@
     <RootNamespace>PiSignage.Control</RootNamespace>
     <!-- allows building from CI/Linux too -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!-- CalVer YYYY.MM.DD.N, same scheme as agent/main.py's AGENT_VERSION.
+         0.0.0 is deliberate: release.yml overrides it with -p:Version from the
+         tag, so anything still reporting 0.0.0 is a local build and the
+         self-updater refuses to touch it. -->
+    <Version>0.0.0</Version>
+    <DebugType>embedded</DebugType>
   </PropertyGroup>
 
   <ItemGroup>
@@ -27,8 +33,12 @@
     <!-- Update (not Include): the SDK default glob already owns this file as a None
          item; a second Include would duplicate it and the copy metadata gets lost.
          TargetPath drops the tools\ folder — the app looks for the viewer next to
-         the exe (RemoteViewerLauncher.BundledViewerPath). -->
-    <None Update="tools\vncviewer.exe" CopyToOutputDirectory="PreserveNewest" TargetPath="vncviewer.exe" />
+         the exe (RemoteViewerLauncher.BundledViewerPath).
+         CopyToPublishDirectory is stated explicitly rather than left to default
+         from CopyToOutputDirectory: publish is what release.yml ships, and the
+         shipped app is two files side by side, not one exe. -->
+    <None Update="tools\vncviewer.exe" CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" TargetPath="vncviewer.exe" />
   </ItemGroup>
 
 </Project>

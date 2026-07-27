@@ -80,7 +80,16 @@
 
   // ---- YouTube IFrame Player API state ----
   let ytReady = false;
-  window.onYouTubeIframeAPIReady = () => { ytReady = true; };
+  // The agent pushes the current item the moment a screen connects, but the API
+  // script above is async — at boot the item usually arrives first. Hold it
+  // briefly instead of burning it on the fallback embed, which cannot turn
+  // captions off and plays muted with no control.
+  let ytPending = null;     // youtube item waiting for the API to load
+  let ytGaveUp = false;     // API never loaded (offline/blocked) — stop waiting
+  window.onYouTubeIframeAPIReady = () => {
+    ytReady = true;
+    if (ytPending) { const m = ytPending; ytPending = null; show(m); }
+  };
   let yt = null;            // {player, layer, videoId} while a player exists
   let ytVolume = 100;       // last volume asked for; applied to new players
 
@@ -126,6 +135,15 @@
       return;
     }
     if (msg.id && msg.id === currentId) return;   // already showing it
+    if (msg.type === 'youtube' && !ytReady && !ytGaveUp) {
+      ytPending = msg;                            // currentId left alone: the
+      setTimeout(() => {                          // retry must not dedupe itself
+        if (ytReady || !ytPending) return;
+        ytGaveUp = true;
+        const m = ytPending; ytPending = null; show(m);
+      }, 8000);
+      return;
+    }
     currentId = msg.id || null;
     // content that IS a fullscreen timer page makes the corner overlay redundant
     showsFullTimer = msg.type === 'url' && /[?&]view=timer\b/.test(msg.src || '');
@@ -144,11 +162,16 @@
         videoId: msg.videoId,
         playerVars: { autoplay: 1, controls: 0, rel: 0, cc_load_policy: 0 },
         events: {
+          // Captions off. Nothing else works: cc_load_policy=0 only means "use
+          // the viewer's preference", and a video's auto-generated (ASR) track
+          // still shows. The captions module does not exist yet at onReady --
+          // it loads later and announces itself here -- and unloadModule() does
+          // not remove it. Clearing the track does. Fires again on reload.
+          onApiChange: (e) => {
+            try { e.target.setOption('captions', 'track', {}); } catch (err) {}
+          },
           onReady: (e) => {
             e.target.setVolume(ytVolume);
-            // cc_load_policy=0 only means "user preference" — this is the real
-            // off switch ('captions' = old player, 'cc' = HTML5 player)
-            try { e.target.unloadModule('captions'); e.target.unloadModule('cc'); } catch (e) {}
             e.target.unMute();           // embeds start muted in some states
             e.target.playVideo();
             swap(back);
