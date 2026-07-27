@@ -96,7 +96,13 @@ public partial class App : Application
             {
                 case AppUpdateInstaller.Outcome.Applied:
                     Process.Start(new ProcessStartInfo(ExePath) { UseShellExecute = true });
-                    Shutdown();
+                    // Environment.Exit, not Shutdown: Shutdown only *requests* exit,
+                    // and StartupUri still builds MainWindow once OnStartup returns.
+                    // By then this process's own exe has been renamed to .old and a
+                    // different build sits at that path, so loading the window's
+                    // BAML throws, DispatcherUnhandledException swallows it, and the
+                    // store is left with an error dialog and two running copies.
+                    Environment.Exit(0);
                     return;
                 case AppUpdateInstaller.Outcome.Nothing:
                     // Nothing waiting, so this build is the settled one and the
