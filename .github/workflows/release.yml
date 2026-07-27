@@ -1,0 +1,118 @@
+name: Release
+
+# Cutting a tag publishes the Windows control app. The store laptop picks the
+# release up on its own; Display Pis never talk to GitHub — they keep receiving
+# the agent bundle from their paired laptop over the signed /api/update channel.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build, e.g. 2026.08.01.1 (dry runs only)"
+        required: true
+      dry_run:
+        description: "Build and verify without publishing a release"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Publish Windows control app
+    runs-on: windows-latest
+    permissions:
+      contents: write   # only this job, only to create the release
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "8.0.x"
+
+      # The tag is zero-padded to match agent/main.py's AGENT_VERSION format, but
+      # AssemblyVersion is four ushorts and renders 2026.07.26.1 back as
+      # 2026.7.26.1. Carry both: the numeric one for -p:Version, the padded one
+      # for display. Nothing downstream may compare version strings.
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            tag="${GITHUB_REF#refs/tags/}"
+          else
+            tag="v${{ github.event.inputs.version }}"
+          fi
+          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]+$'; then
+            echo "Version must be vYYYY.MM.DD.N (zero-padded), got: $tag"
+            exit 1
+          fi
+          padded="${tag#v}"
+          numeric="$(printf '%s' "$padded" | sed -E 's/(^|\.)0+([0-9])/\1\2/g')"
+          echo "tag=$tag"           >> "$GITHUB_OUTPUT"
+          echo "padded=$padded"     >> "$GITHUB_OUTPUT"
+          echo "numeric=$numeric"   >> "$GITHUB_OUTPUT"
+          echo "Building $tag (assembly version $numeric)"
+
+      # A tag can be cut from any commit, so re-run the suite rather than trust
+      # that this commit is the one CI already went green on.
+      - name: Test
+        run: dotnet test PiSignage.slnx -c Release
+
+      - name: Publish
+        run: >
+          dotnet publish windows-app/PiSignageControl.csproj
+          -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+          -p:Version=${{ steps.ver.outputs.numeric }}
+          -p:InformationalVersion=${{ steps.ver.outputs.padded }}
+          -o publish
+
+      # The shipped app is two files side by side: RemoteViewerLauncher resolves
+      # vncviewer.exe from AppContext.BaseDirectory. A release missing it builds
+      # and runs fine right up until someone clicks Remote control.
+      - name: Verify payload
+        shell: pwsh
+        run: |
+          $exe = "publish/PiSignageControl.exe"
+          $vnc = "publish/vncviewer.exe"
+          foreach ($f in @($exe, $vnc)) {
+            if (-not (Test-Path $f)) { throw "Missing from publish output: $f" }
+          }
+          $actual = (Get-Item $exe).VersionInfo.FileVersion
+          $expected = "${{ steps.ver.outputs.numeric }}"
+          if ([version]$actual -ne [version]$expected) {
+            throw "FileVersion is $actual, expected $expected"
+          }
+          Write-Host "PiSignageControl.exe $actual, vncviewer.exe present"
+
+      # Same origin as the exe, so this catches truncated or corrupted downloads
+      # and tampering at rest between staging and swap. It is not an origin
+      # signature -- see SECURITY.md.
+      - name: Checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem publish/*.exe | ForEach-Object {
+            "$((Get-FileHash $_ -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          } | Set-Content publish/SHA256SUMS.txt -Encoding ascii
+          Get-Content publish/SHA256SUMS.txt
+
+      - name: Create release
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.ver.outputs.tag }}" \
+            publish/PiSignageControl.exe \
+            publish/vncviewer.exe \
+            publish/SHA256SUMS.txt \
+            --generate-notes \
+            --notes-file - <<'NOTES'
+          The store laptop updates itself from this release. Display Pis receive
+          the agent from their paired laptop during the nightly quiet window --
+          they never download anything from GitHub.
+
+          `vncviewer.exe` is TigerVNC, redistributed unmodified under GPLv2.
+          See THIRD-PARTY.md for the corresponding upstream source.
+          NOTES

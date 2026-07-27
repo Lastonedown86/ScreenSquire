@@ -52,6 +52,14 @@ dotnet publish -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
 # bin\Release\net8.0-windows\win-x64\publish\PiSignageControl.exe
 ```
 
+The publish output is **two files**: `PiSignageControl.exe` and `vncviewer.exe`
+beside it. The app resolves the viewer from its own directory, so keep them
+together. See `THIRD-PARTY.md` for the viewer's GPLv2 terms.
+
+A local build reports version `0.0.0`, which the self-updater treats as "a
+developer built this, leave it alone". Only executables built by the release
+workflow carry a real version and update themselves. See **Releases** below.
+
 The executable embeds the complete approved agent bundle:
 `main.py`, `trust.py`, `control_auth.py`, `delivery_reset.py`, and `static/**`.
 When a paired Pi is out of date, **Update Pi software** sends that authenticated
@@ -164,6 +172,43 @@ pair the builder laptop to a production Pi.
 The agent advertises `_pisign._tcp.local` over mDNS with its name and port. The
 app verifies the stable device ID returned by `/api/status`; names, IP addresses,
 DHCP changes, and non-default ports do not define ownership.
+
+## Releases
+
+Software reaches a store in two hops, and only the first one involves GitHub:
+
+```
+tag vYYYY.MM.DD.N  ──►  GitHub Release  ──►  Controller laptop  ──►  Display Pis
+                        (.github/workflows/    (updates itself)     (signed push from
+                         release.yml)                                the paired laptop)
+```
+
+**Display Pis never contact GitHub.** A Pi trusts exactly one Controller laptop
+and accepts software only over the HMAC-signed `/api/update` channel, so putting
+an internet download in that path would trade a verified signature for plain
+transport trust. The laptop stays the only thing that talks to the internet.
+
+To cut a release, push a tag matching `vYYYY.MM.DD.N` — zero-padded, the same
+CalVer scheme as the agent's `AGENT_VERSION`. The workflow re-runs the full test
+suite (a tag can be cut from any commit), publishes the self-contained exe with
+the version injected from the tag, verifies that both executables are present
+and that the embedded `FileVersion` matches, and attaches three assets:
+`PiSignageControl.exe`, `vncviewer.exe`, and `SHA256SUMS.txt`.
+
+Use the `workflow_dispatch` trigger with `dry_run` to exercise the whole build
+and verification path without publishing anything.
+
+The client does nothing. The laptop notices the release, downloads and verifies
+it in the background, and applies it the next time the app is opened. Display
+Pis are brought up to date during the nightly quiet window.
+
+Rolling back a bad app build: the previous executable is kept as
+`PiSignageControl.exe.old` next to the current one until the new build has
+started successfully once. Renaming it back restores the previous version.
+
+`SHA256SUMS.txt` comes from the same origin as the executables, so it protects
+against corrupted or truncated downloads — not against a compromised origin.
+`SECURITY.md` states the full trust boundary.
 
 ## Agent updates
 
