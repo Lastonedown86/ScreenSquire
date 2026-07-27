@@ -713,7 +713,9 @@ public partial class MainWindow : Window
                             current = v.GetString();
                     }
                     catch (Exception) { skipped++; continue; }   // off / unreachable — leave it alone
-                    if (current == bundled) { skipped++; continue; }  // already up to date
+                    // not "current != bundled": that also fires when the Pi is ahead
+                    // of this exe, and pushing then is a downgrade.
+                    if (!PiSignage.Signage.AgentUpdater.IsNewer(bundled, current)) { skipped++; continue; }
 
                     await PiSignage.Signage.AgentUpdater.PushAsync(
                         http,
@@ -805,8 +807,8 @@ public partial class MainWindow : Window
                 "url" => $"Now: {FriendlyUrlLabel(s.NowShowing.Src)}",
                 _ => $"Now: {s.NowShowing.Type} {System.IO.Path.GetFileName(s.NowShowing.Src ?? "")}"
             };
-            _updateAvailable =
-                AgentBundle.Version() is string bundled && s.AgentVersion != bundled;
+            _updateAvailable = PiSignage.Signage.AgentUpdater.IsNewer(
+                AgentBundle.Version(), s.AgentVersion);
             SyncSetupDialogState();
         }
         catch
