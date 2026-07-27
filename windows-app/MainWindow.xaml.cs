@@ -29,6 +29,12 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _nightlyPush =
         new() { Interval = PiSignage.Signage.AgentUpdateSchedule.CheckInterval };
     private bool _nightlyPushRunning;   // a sweep can outlast the interval
+    // First check shortly after the window is up, then twice a day.
+    private readonly DispatcherTimer _appUpdateCheck =
+        new() { Interval = TimeSpan.FromSeconds(30) };
+    private bool _appUpdateChecking;
+    private const string ReleaseApiUrl =
+        "https://api.github.com/repos/Lastonedown86/ScreenSquire/releases/latest";
 
     public MainWindow()
     {
@@ -41,6 +47,12 @@ public partial class MainWindow : Window
         _poll.Tick += async (_, _) => await RefreshStatusAsync();
         _nightlyPush.Tick += async (_, _) => await RunNightlyAgentPushAsync();
         _nightlyPush.Start();
+        _appUpdateCheck.Tick += async (_, _) =>
+        {
+            _appUpdateCheck.Interval = TimeSpan.FromHours(6);
+            await CheckForAppUpdateAsync();
+        };
+        _appUpdateCheck.Start();
         Closing += MainWindow_Closing;
         ReloadDevices();
         _ = ProbeDevicesAsync();   // light up the online dots
@@ -251,6 +263,84 @@ public partial class MainWindow : Window
             : $"Last automatic update: {last}";
         _setupDlg.LblLastAutoUpdate.Visibility = string.IsNullOrWhiteSpace(last)
             ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    // Silent by design. The client is never asked to do anything: a verified
+    // build is staged in the background and swapped in at the next launch. The
+    // banner only offers to bring that forward. Every failure path here is quiet
+    // and simply retried later — a store laptop must not be shown a download error.
+    private async Task CheckForAppUpdateAsync()
+    {
+        if (_appUpdateChecking) return;
+        if (App.CurrentVersion == PiSignage.Signage.AppUpdate.DevBuild) return;
+        if (string.IsNullOrEmpty(App.ExePath)) return;
+        if (Path.GetDirectoryName(App.ExePath) is not string exeDir) return;
+
+        _appUpdateChecking = true;
+        try
+        {
+            // Checked before downloading 150 MB, not after: an app dropped into
+            // Program Files can never replace its own executable.
+            if (!PiSignage.Signage.AppUpdateInstaller.CanSelfUpdate(exeDir))
+            {
+                ShowUpdateBanner(
+                    "This copy of the app cannot update itself, because it is " +
+                    "installed somewhere it cannot write. Ask for a fresh copy.",
+                    canRestart: false);
+                return;
+            }
+
+            using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+            http.DefaultRequestHeaders.UserAgent.ParseAdd("PiSignageControl");
+            var pending = await PiSignage.Signage.AppUpdate.StageAsync(
+                http, ReleaseApiUrl, App.CurrentVersion, App.UpdateStageDir, VerifyLaunchAsync);
+            if (pending != null)
+                ShowUpdateBanner(
+                    $"Version {pending.Version} is ready, and will be applied the " +
+                    "next time you open the app.",
+                    canRestart: true);
+        }
+        catch { /* offline, or GitHub is down: try again in six hours */ }
+        finally { _appUpdateChecking = false; }
+    }
+
+    // Start the downloaded build and see whether it exits cleanly. This is what
+    // catches a truncated download or an antivirus quarantine, and it happens
+    // before the working executable is touched.
+    private static async Task<bool> VerifyLaunchAsync(string exe)
+    {
+        try
+        {
+            using var probe = System.Diagnostics.Process.Start(
+                new System.Diagnostics.ProcessStartInfo(exe, "--selftest")
+                {
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                });
+            if (probe == null) return false;
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            await probe.WaitForExitAsync(cts.Token);
+            return probe.ExitCode == 0;
+        }
+        catch { return false; }
+    }
+
+    private void ShowUpdateBanner(string message, bool canRestart)
+    {
+        LblUpdateBanner.Text = message;
+        BtnRestartForUpdate.Visibility = canRestart ? Visibility.Visible : Visibility.Collapsed;
+        PnlUpdateBanner.Visibility = Visibility.Visible;
+    }
+
+    private void BtnRestartForUpdate_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrEmpty(App.ExePath)) return;
+        // The swap only happens at startup, because the exe cannot be replaced
+        // while this process holds it. So relaunch and quit: the new process does
+        // the rename, then starts the updated build and exits in turn.
+        System.Diagnostics.Process.Start(
+            new System.Diagnostics.ProcessStartInfo(App.ExePath) { UseShellExecute = true });
+        Application.Current.Shutdown();
     }
 
     // Pushes the bundled agent to every saved Pi, but only in the small hours:
