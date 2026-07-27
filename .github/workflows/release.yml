@@ -86,6 +86,26 @@ jobs:
           }
           Write-Host "PiSignageControl.exe $actual, vncviewer.exe present"
 
+      # The only step that runs the artifact rather than inspecting it. Every
+      # laptop gates every update on exactly this command, and a build that fails
+      # it can never be staged -- silently, because the updater's failure paths
+      # are all quiet by design. A local build is not evidence: this first failed
+      # only once CI's runtime moved to 8.0.28, while 8.0.25 locally exited 0.
+      - name: Selftest the published build
+        shell: pwsh
+        run: |
+          $p = Start-Process ./publish/PiSignageControl.exe -ArgumentList '--selftest' -PassThru
+          # WinExe, so the shell does not wait on its own. 20s is the same budget
+          # AppUpdate's verifyLaunch allows before it gives up on the download.
+          if (-not $p.WaitForExit(20000)) {
+            $p.Kill()
+            throw "--selftest did not exit within 20s"
+          }
+          if ($p.ExitCode -ne 0) {
+            throw "--selftest exited $($p.ExitCode); verifyLaunch would reject this build"
+          }
+          Write-Host "--selftest exit 0"
+
       # Same origin as the exe, so this catches truncated or corrupted downloads
       # and tampering at rest between staging and swap. It is not an origin
       # signature -- see SECURITY.md.
