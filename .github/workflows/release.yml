@@ -89,12 +89,19 @@ jobs:
       # The only step that runs the artifact rather than inspecting it. Every
       # laptop gates every update on exactly this command, and a build that fails
       # it can never be staged -- silently, because the updater's failure paths
-      # are all quiet by design. A local build is not evidence: this first failed
-      # only once CI's runtime moved to 8.0.28, while 8.0.25 locally exited 0.
-      - name: Selftest the published build
+      # are all quiet by design.
+      #
+      # Copied to an empty directory first, which is the whole point: a laptop
+      # downloads the exe on its own, with none of publish/ beside it. Run in
+      # place this passes even when the exe depends on a sibling that is never
+      # shipped, which is exactly how v2026.07.27.1 and .2 were released broken.
+      - name: Selftest the published build as a downloaded copy
         shell: pwsh
         run: |
-          $p = Start-Process ./publish/PiSignageControl.exe -ArgumentList '--selftest' -PassThru
+          $iso = Join-Path $env:RUNNER_TEMP 'selftest'
+          New-Item -ItemType Directory -Force $iso | Out-Null
+          Copy-Item publish/PiSignageControl.exe $iso
+          $p = Start-Process (Join-Path $iso 'PiSignageControl.exe') -ArgumentList '--selftest' -PassThru
           # WinExe, so the shell does not wait on its own. 20s is the same budget
           # AppUpdate's verifyLaunch allows before it gives up on the download.
           if (-not $p.WaitForExit(20000)) {
@@ -104,7 +111,7 @@ jobs:
           if ($p.ExitCode -ne 0) {
             throw "--selftest exited $($p.ExitCode); verifyLaunch would reject this build"
           }
-          Write-Host "--selftest exit 0"
+          Write-Host "--selftest exit 0 from an isolated copy"
 
       # Same origin as the exe, so this catches truncated or corrupted downloads
       # and tampering at rest between staging and swap. It is not an origin

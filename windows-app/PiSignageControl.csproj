@@ -16,6 +16,13 @@
          self-updater refuses to touch it. -->
     <Version>0.0.0</Version>
     <DebugType>embedded</DebugType>
+    <!-- PublishSingleFile leaves native libraries beside the exe unless this is
+         set, and WPF brings five of them (wpfgfx_cor3, PresentationNative_cor3,
+         D3DCompiler_47_cor3, PenImc_cor3, vcruntime140_cor3). release.yml ships
+         the exe alone, so without this the downloaded copy dies on startup with
+         DllNotFoundException. It only ever worked when run from its own publish
+         directory, which is exactly where it was tested. -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
 
   <ItemGroup>
@@ -37,8 +44,13 @@
          CopyToPublishDirectory is stated explicitly rather than left to default
          from CopyToOutputDirectory: publish is what release.yml ships, and the
          shipped app is two files side by side, not one exe. -->
+    <!-- ExcludeFromSingleFile: IncludeNativeLibrariesForSelfExtract otherwise
+         pulls this into the bundle, and RemoteViewerLauncher resolves the viewer
+         from AppContext.BaseDirectory, i.e. beside the exe. Bundled, it is not
+         there and Remote control breaks. -->
     <None Update="tools\vncviewer.exe" CopyToOutputDirectory="PreserveNewest"
-          CopyToPublishDirectory="PreserveNewest" TargetPath="vncviewer.exe" />
+          CopyToPublishDirectory="PreserveNewest" TargetPath="vncviewer.exe"
+          ExcludeFromSingleFile="true" />
   </ItemGroup>
 
 </Project>

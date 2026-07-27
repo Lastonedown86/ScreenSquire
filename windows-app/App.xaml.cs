@@ -57,17 +57,12 @@ public partial class App : Application
     {
         // A freshly downloaded build is launched with this flag before anything is
         // swapped. Exiting 0 is the whole test: it proves the binary actually
-        // starts on this machine -- not truncated, not quarantined by antivirus.
-        //
-        // Environment.Exit, not Shutdown: Shutdown asks WPF to tear down, and a
-        // teardown this early unhooks window subclasses through a native
-        // WindowsBase entry point that a single-file bundle cannot resolve yet.
-        // The published build died there with DllNotFoundException (0xC000041D),
-        // so verifyLaunch saw a non-zero exit and no release could ever stage.
-        // Nothing is initialised at this point, so there is nothing to unwind.
+        // starts on this machine -- not truncated, not quarantined by antivirus,
+        // and not missing a native library it needs.
         if (e.Args.Contains("--selftest"))
         {
-            Environment.Exit(0);
+            Shutdown(0);
+            return;
         }
 
         base.OnStartup(e);
