@@ -36,6 +36,45 @@ public class SettingsStoreTests
     }
 
     [Fact]
+    public void AgentPushRecordRoundTrips()
+    {
+        var path = TempFile();
+        try
+        {
+            var store = new SettingsStore(path);
+            var when = new System.DateTime(2026, 7, 26, 3, 12, 0, System.DateTimeKind.Local);
+            store.Save(new AppSettings
+            {
+                LastAgentPushLocal = when,
+                LastAgentPushSummary = "Front and Back updated.",
+            });
+
+            var got = store.Load();
+            Assert.Equal(when, got.LastAgentPushLocal);
+            Assert.Equal("Front and Back updated.", got.LastAgentPushSummary);
+        }
+        finally { System.IO.File.Delete(path); }
+    }
+
+    [Fact]
+    public void SettingsWrittenBeforeAutomaticUpdatesExistedStillLoad()
+    {
+        // Every store laptop already has a settings.json without these fields.
+        // Loading one must look like "a sweep has never completed", not throw.
+        var path = TempFile();
+        try
+        {
+            System.IO.File.WriteAllText(path,
+                "{\"LastDeviceHostname\":\"pisignage1\",\"TimerMinutes\":40}");
+            var got = new SettingsStore(path).Load();
+            Assert.Null(got.LastAgentPushLocal);
+            Assert.Equal("", got.LastAgentPushSummary);
+            Assert.Equal("pisignage1", got.LastDeviceHostname);
+        }
+        finally { System.IO.File.Delete(path); }
+    }
+
+    [Fact]
     public void MissingOrCorruptFileLoadsDefaults()
     {
         Assert.Equal(25, new SettingsStore(TempFile()).Load().TimerMinutes);

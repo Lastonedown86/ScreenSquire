@@ -212,6 +212,24 @@ against corrupted or truncated downloads — not against a compromised origin.
 
 ## Agent updates
 
+Display Pis update themselves overnight. While the control app is open it checks
+every 15 minutes whether the local time is between **03:00 and 05:00**, and if so
+pushes the bundled agent to every saved Pi that is reachable and out of date.
+Nobody has to click anything, and no TV goes dark during trading hours.
+
+A Pi that is switched off at 03:00 does not end the night: the sweep is only
+recorded as finished once nothing is left worth retrying, so a Pi powered on at
+03:40 is still caught before the window shuts. One that stays off all night waits
+for the next window. **Update Pi software** in Device setup remains available as
+an override for when it cannot wait, and the result of the last automatic sweep
+is shown there — that is the only place it is ever reported, since the sweep runs
+with nobody watching.
+
+The window opens at 03:00 so a push completes before the Pi's own
+`pisignage-kiosk-restart.timer` fires at 04:00; otherwise the TV would blink
+twice. A Pi that is saved but has never been paired with this laptop is reported
+and skipped rather than retried, because retrying cannot create a credential.
+
 For developers, `deploy-agent.ps1` sends the same complete signed bundle used by
 the app. It reads saved device identities and DPAPI-protected credentials from
 the current Windows user's Pi Signage data.

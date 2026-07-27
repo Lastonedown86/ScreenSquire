@@ -43,6 +43,11 @@ public sealed class AppSettings
     // Remote-control server key fingerprints we've accepted, per device id.
     // Mirrors the viewer's trust-on-first-use: silent when unchanged, loud when not.
     public Dictionary<string, string> RemoteFingerprints { get; set; } = new();
+    // When the nightly agent sweep last finished with nothing left to retry, in
+    // local time, and what it did. Null means it has never completed one.
+    // Nobody is watching at 03:00, so this is the only record the operator gets.
+    public DateTime? LastAgentPushLocal { get; set; }
+    public string LastAgentPushSummary { get; set; } = "";
 }
 
 public sealed class SpotifyBookmark

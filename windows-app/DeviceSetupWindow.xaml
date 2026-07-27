@@ -37,6 +37,12 @@
                     ToolTipService.ShowOnDisabled="True"/>
         </WrapPanel>
 
+        <!-- Pi updates run themselves overnight with nobody watching, so this is
+             the only place the result is ever reported. -->
+        <TextBlock x:Name="LblLastAutoUpdate" Margin="0,4,0,0" TextWrapping="Wrap"
+                   FontSize="11" Foreground="{StaticResource TextMuted}"
+                   Visibility="Collapsed"/>
+
         <Button Content="Close" IsCancel="True" HorizontalAlignment="Right"
                 MinWidth="70" Margin="0,14,0,0"/>
     </StackPanel>

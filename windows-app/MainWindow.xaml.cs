@@ -24,6 +24,11 @@ public partial class MainWindow : Window
     private System.Collections.Generic.List<PiSignage.Signage.SavedDevice> _devices = new();
     private DeviceSetupWindow? _setupDlg;   // non-null only while the modal is open
     private bool _updateAvailable;   // BtnUpdatePi lives in the dialog now; remembered between opens
+    private bool _fleetUpdateAvailable;   // any saved Pi behind this exe, connected or not
+    // Ticks all day; AgentUpdateSchedule decides whether a tick does anything.
+    private readonly DispatcherTimer _nightlyPush =
+        new() { Interval = PiSignage.Signage.AgentUpdateSchedule.CheckInterval };
+    private bool _nightlyPushRunning;   // a sweep can outlast the interval
 
     public MainWindow()
     {
@@ -34,6 +39,8 @@ public partial class MainWindow : Window
         LstPlaylist.ItemsSource = _playlist;
         _playlist.CollectionChanged += (_, _) => SetDirty(true);
         _poll.Tick += async (_, _) => await RefreshStatusAsync();
+        _nightlyPush.Tick += async (_, _) => await RunNightlyAgentPushAsync();
+        _nightlyPush.Start();
         Closing += MainWindow_Closing;
         ReloadDevices();
         _ = ProbeDevicesAsync();   // light up the online dots
@@ -72,6 +79,8 @@ public partial class MainWindow : Window
     private async Task ProbeDevicesAsync()
     {
         var devs = _devices.ToList();
+        var bundled = AgentBundle.Version();
+        var behind = false;
         await Task.WhenAll(devs.Select(async d =>
         {
             try
@@ -81,9 +90,17 @@ public partial class MainWindow : Window
                 d.Online = status is not null &&
                     PiSignage.Signage.DeviceIdentityPolicy.IsMatch(
                         d, status.DeviceId, status.Name);
+                // Whether any Pi needs the update is a property of the fleet, not
+                // of whichever one happens to be selected — the Update button has
+                // to appear even with nothing connected.
+                if (d.Online == true &&
+                    PiSignage.Signage.AgentUpdater.IsNewer(bundled, status!.AgentVersion))
+                    behind = true;
             }
             catch { d.Online = false; }
         }));
+        _fleetUpdateAvailable = behind;
+        SyncSetupDialogState();
     }
 
     private void ReloadDevices()
@@ -223,8 +240,49 @@ public partial class MainWindow : Window
         _setupDlg.BtnRename.IsEnabled = isSaved;
         _setupDlg.BtnForget.IsEnabled = isSaved;
         _setupDlg.BtnPrepareDelivery.IsEnabled = CanPrepareSelectedDevice();
-        _setupDlg.BtnUpdatePi.Visibility = _updateAvailable && _api != null
+        // Not gated on a live connection: the button pushes to every saved Pi, and
+        // needing to connect to one first to update the others made no sense.
+        _setupDlg.BtnUpdatePi.Visibility = _updateAvailable || _fleetUpdateAvailable
             ? Visibility.Visible : Visibility.Collapsed;
+
+        var last = App.Settings.LastAgentPushSummary;
+        _setupDlg.LblLastAutoUpdate.Text = string.IsNullOrWhiteSpace(last)
+            ? ""
+            : $"Last automatic update: {last}";
+        _setupDlg.LblLastAutoUpdate.Visibility = string.IsNullOrWhiteSpace(last)
+            ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    // Pushes the bundled agent to every saved Pi, but only in the small hours:
+    // updating a Pi restarts its browser and the TV goes dark for about half a
+    // minute, which is fine at 03:00 and not fine at 15:00.
+    private async Task RunNightlyAgentPushAsync()
+    {
+        if (_nightlyPushRunning) return;
+        if (!PiSignage.Signage.AgentUpdateSchedule.ShouldRun(
+                DateTime.Now, App.Settings.LastAgentPushLocal)) return;
+        if (AgentBundle.Version() is not string bundled) return;
+
+        _nightlyPushRunning = true;
+        try
+        {
+            var result = await PushAgentToFleetAsync(bundled);
+            App.Settings.LastAgentPushSummary = result.Summary();
+            // Only close out the night when nothing is worth another attempt. A Pi
+            // switched on at 03:40 is therefore still caught by a later tick, and
+            // one that stays off all night waits for tomorrow's window.
+            if (result.Settled) App.Settings.LastAgentPushLocal = DateTime.Now;
+        }
+        catch (Exception ex)
+        {
+            App.Settings.LastAgentPushSummary = "Automatic update failed: " + ex.Message;
+        }
+        finally
+        {
+            App.SaveSettings();
+            _nightlyPushRunning = false;
+            SyncSetupDialogState();
+        }
     }
 
     private void BtnDeviceSetup_Click(object sender, RoutedEventArgs e)
