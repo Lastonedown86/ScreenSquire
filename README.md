@@ -198,9 +198,20 @@ and that the embedded `FileVersion` matches, and attaches three assets:
 Use the `workflow_dispatch` trigger with `dry_run` to exercise the whole build
 and verification path without publishing anything.
 
-The client does nothing. The laptop notices the release, downloads and verifies
-it in the background, and applies it the next time the app is opened. Display
-Pis are brought up to date during the nightly quiet window.
+The client does nothing. Within six hours the laptop notices the release,
+downloads it, checks it against `SHA256SUMS.txt`, confirms the new build's
+embedded version, and starts it once with `--selftest` to prove it runs at all.
+Only then is it staged, and it is swapped in the next time the app is opened. A
+banner offers a **Restart now** button for anyone who does not want to wait, but
+nothing is ever required. Every failure is silent and simply retried later.
+
+Install the app somewhere the signed-in user can write —
+`%LocalAppData%\Programs\PiSignage\` is the intended location. From
+`Program Files` it cannot replace its own executable, and it will say so instead
+of downloading 150 MB to find out.
+
+Display Pis are brought up to date separately, during the nightly quiet window
+described under **Agent updates**.
 
 Rolling back a bad app build: the previous executable is kept as
 `PiSignageControl.exe.old` next to the current one until the new build has
