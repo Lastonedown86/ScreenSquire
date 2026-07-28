@@ -79,6 +79,23 @@ public static class AppUpdate
             || host.EndsWith(".githubusercontent.com", StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>The version to show a person, e.g. in Help &gt; About.
+    ///
+    /// Prefers InformationalVersion because release.yml stamps it with the padded
+    /// tag (2026.08.01.1), which is what the release is actually called; the
+    /// assembly version renders that back as 2026.8.1.1 and would not match. The
+    /// SDK appends "+&lt;commit sha&gt;", which is noise to a store operator.</summary>
+    public static string DisplayVersion(string? informational, Version assembly)
+    {
+        var shown = informational;
+        if (shown is not null && shown.IndexOf('+') is var plus && plus >= 0)
+            shown = shown[..plus];
+        if (string.IsNullOrWhiteSpace(shown)) shown = assembly.ToString();
+        // A build nobody stamped. Say so, rather than show a bare 0.0.0 that
+        // looks like a real version someone might report.
+        return assembly == DevBuild ? $"{shown} (development build)" : shown;
+    }
+
     /// <summary>Is this release worth the download?</summary>
     public static bool ShouldDownload(Version current, Version candidate, Version? staged)
     {

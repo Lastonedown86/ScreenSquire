@@ -37,6 +37,15 @@
                  second line when narrow instead of clipping; device actions
                  stay disabled until a device is selected/connected -->
             <DockPanel>
+                <!-- Transparent background so the menu sits on the header card
+                     instead of drawing the default grey menu strip across it. -->
+                <Menu x:Name="MnuHelp" DockPanel.Dock="Right" Background="Transparent"
+                      VerticalAlignment="Top" Margin="6,0,0,4">
+                    <MenuItem Header="_Help">
+                        <MenuItem x:Name="MnuAbout" Header="_About ScreenSquire…"
+                                  Click="MnuAbout_Click"/>
+                    </MenuItem>
+                </Menu>
                 <Button x:Name="BtnDeviceSetup" DockPanel.Dock="Right" Content="⚙ Device _setup…"
                         VerticalAlignment="Top" Margin="6,0,0,4" Click="BtnDeviceSetup_Click"
                         ToolTip="Find, rename, update, or prepare Pis"/>

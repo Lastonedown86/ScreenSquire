@@ -28,6 +28,47 @@ public class AppUpdateTests : IDisposable
           {"name":"SHA256SUMS.txt","browser_download_url":"{{sumsUrl}}"}]}
         """;
 
+    // ---------- display version ----------
+
+    [Fact]
+    public void DisplayVersion_prefers_the_padded_tag_over_the_assembly_version()
+    {
+        // 2026.08.01.1 is what the release is called; the assembly renders 2026.8.1.1.
+        Assert.Equal(
+            "2026.08.01.1",
+            AppUpdate.DisplayVersion("2026.08.01.1", new Version(2026, 8, 1, 1)));
+    }
+
+    [Fact]
+    public void DisplayVersion_drops_the_commit_sha_the_sdk_appends()
+    {
+        Assert.Equal(
+            "2026.08.01.1",
+            AppUpdate.DisplayVersion(
+                "2026.08.01.1+1271e66b937ef69fa196e93b7932545b78fcb71e",
+                new Version(2026, 8, 1, 1)));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void DisplayVersion_falls_back_to_the_assembly_version(string? informational)
+    {
+        Assert.Equal(
+            "2026.8.1.1",
+            AppUpdate.DisplayVersion(informational, new Version(2026, 8, 1, 1)));
+    }
+
+    [Fact]
+    public void DisplayVersion_marks_an_unstamped_build_as_development()
+    {
+        // Nobody should report "0.0.0" as though it were a release.
+        Assert.Equal(
+            "0.0.0 (development build)",
+            AppUpdate.DisplayVersion("0.0.0+abc123", AppUpdate.DevBuild));
+    }
+
     // ---------- release parsing ----------
 
     [Fact]
