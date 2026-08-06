@@ -236,6 +236,23 @@ public class ApiClient : IDisposable
         await ThrowIfError(resp);
     }
 
+    // Swap the TV between the kiosk and a windowed Spotify sign-in browser.
+    public async Task<bool> StartSpotifySigninAsync(ControlContext context)
+    {
+        var body = JsonSerializer.SerializeToUtf8Bytes(new { running = true }, JsonOpts);
+        using var resp = await SendJsonAsync(HttpMethod.Post, "/api/spotify/signin", body, context);
+        await ThrowIfError(resp);
+        var r = await resp.Content.ReadFromJsonAsync<KioskResult>();
+        return r?.Ok ?? false;
+    }
+
+    public async Task StopSpotifySigninAsync(ControlContext context)
+    {
+        var body = JsonSerializer.SerializeToUtf8Bytes(new { running = false }, JsonOpts);
+        using var resp = await SendJsonAsync(HttpMethod.Post, "/api/spotify/signin", body, context);
+        await ThrowIfError(resp);
+    }
+
     async Task<HttpResponseMessage> SendJsonAsync(
         HttpMethod method,
         string pathAndQuery,

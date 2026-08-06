@@ -826,43 +826,11 @@ public partial class MainWindow : Window
         BtnRemote.IsEnabled = true;
     }
 
-    // Trust-on-first-use for the Pi's remote-control key, mirroring the viewer's
-    // own prompt but with the expected value delivered over the signed channel.
-    // Silent when the key matches what we accepted before; loud when it changed.
-    private bool ConfirmServerFingerprint(RemoteDesktopSession session)
-    {
-        var fp = session.Fingerprint;
-        if (string.IsNullOrEmpty(fp)) return true;   // pre-fingerprint agent
-        var deviceId = (CmbAddress.SelectedItem as PiSignage.Signage.SavedDevice)?.DeviceId;
-        if (string.IsNullOrWhiteSpace(deviceId)) return true;
-        App.Settings.RemoteFingerprints.TryGetValue(deviceId, out var known);
-        if (known == fp) return true;
-        if (known == null)
-        {
-            if (MessageBox.Show(this,
-                    "First remote session with this Pi.\n\n" +
-                    "If the viewer asks you to verify the server, the fingerprint it shows must be exactly:\n\n" +
-                    fp + "\n\nContinue?",
-                    "Verify remote server", MessageBoxButton.YesNo,
-                    MessageBoxImage.Information) != MessageBoxResult.Yes)
-                return false;
-        }
-        else
-        {
-            if (MessageBox.Show(this,
-                    "WARNING: this Pi's remote-control key has CHANGED.\n\n" +
-                    $"Expected: {known}\nReported: {fp}\n\n" +
-                    "That's normal only if the Pi was re-flashed or reset. " +
-                    "If you didn't do either, don't continue — something else may be answering as this Pi.\n\n" +
-                    "Continue anyway?",
-                    "Remote server key changed", MessageBoxButton.YesNo,
-                    MessageBoxImage.Warning) != MessageBoxResult.Yes)
-                return false;
-        }
-        App.Settings.RemoteFingerprints[deviceId] = fp!;
-        App.SaveSettings();
-        return true;
-    }
+    private bool ConfirmServerFingerprint(RemoteDesktopSession session) =>
+        RemoteTrust.ConfirmServerFingerprint(
+            this,
+            (CmbAddress.SelectedItem as PiSignage.Signage.SavedDevice)?.DeviceId,
+            session);
 
     // Push the agent software bundled inside this exe to every saved, reachable,
     // out-of-date Pi (not just the one currently connected).

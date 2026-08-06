@@ -96,6 +96,7 @@ public partial class SpotifyWindow : Window
         var connected = _api is not null && _ctx is not null;
         BtnPlay.IsEnabled = connected;
         BtnStop.IsEnabled = connected;
+        BtnSignin.IsEnabled = connected && !_signinActive;
         var full = connected && _supportsSpotify;
         BtnPause.IsEnabled = full;
         BtnBack10.IsEnabled = full;
@@ -104,6 +105,81 @@ public partial class SpotifyWindow : Window
         BtnPause.ToolTip = full ? "Pause or resume playback on the TV" : updateHint;
         BtnBack10.ToolTip = full ? "Jump back ten seconds" : updateHint;
         BtnFwd10.ToolTip = full ? "Jump ahead ten seconds" : updateHint;
+    }
+
+    // One-click Spotify sign-in: remote-desktop session + the agent swaps the
+    // kiosk for a windowed browser on the kiosk profile at the Spotify page.
+    // Mirrors MainWindow.BtnRemote_Click's start/confirm/launch/cleanup shape.
+    bool _signinActive;
+
+    async void Signin_Click(object sender, RoutedEventArgs e)
+    {
+        if (_api is null || _ctx is null || CmbDevice.SelectedItem is not SavedDevice dev) return;
+        var viewer = RemoteViewerLauncher.BundledViewerPath();
+        if (!System.IO.File.Exists(viewer))
+        {
+            Toaster.Show("Remote viewer is missing from this install.", ToastKind.Error);
+            return;
+        }
+        _signinActive = true;
+        UpdateControls();
+        var api = _api;   // survive a device switch mid-flow
+        var ctx = _ctx;
+        try
+        {
+            var session = await api.StartRemoteDesktopAsync(ctx);
+            if (session == null)
+            {
+                Toaster.Show("The Pi did not start remote control.", ToastKind.Error);
+                SigninDone();
+                return;
+            }
+            if (!RemoteTrust.ConfirmServerFingerprint(this, dev.DeviceId, session))
+            {
+                try { await api.StopRemoteDesktopAsync(ctx); } catch { }
+                SigninDone();
+                return;
+            }
+            try
+            {
+                await api.StartSpotifySigninAsync(ctx);
+            }
+            catch (Exception ex)
+            {
+                Toaster.Show("Couldn't open the sign-in page: " + ex.Message +
+                             " — if this Pi's software is older, click 'Update Pi software' on the main screen.",
+                             ToastKind.Error);
+                try { await api.StopRemoteDesktopAsync(ctx); } catch { }
+                SigninDone();
+                return;
+            }
+            Toaster.Show("Sign in to Spotify in the viewer window, then close it.", ToastKind.Success);
+            var proc = RemoteViewerLauncher.Launch(viewer, dev.Ip, session);
+            _ = Task.Run(async () =>
+            {
+                // The finally always re-enables the button; the agent's idle
+                // timeout is the backstop if these stops never arrive.
+                try
+                {
+                    await proc.WaitForExitAsync();
+                    try { await api.StopSpotifySigninAsync(ctx); } catch { }
+                    try { await api.StopRemoteDesktopAsync(ctx); } catch { }
+                }
+                finally { Dispatcher.Invoke(SigninDone); }
+            });
+            return;
+        }
+        catch (Exception ex)
+        {
+            Toaster.Show("Couldn't start sign-in: " + ex.Message, ToastKind.Error);
+            SigninDone();
+        }
+    }
+
+    void SigninDone()
+    {
+        _signinActive = false;
+        UpdateControls();
     }
 
     ControlContext? TryControlContext(string deviceId)
