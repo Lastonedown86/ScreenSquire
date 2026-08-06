@@ -298,6 +298,82 @@ public class ControllerCredentialsTests
             CredentialVault.DefaultPath());
     }
 
+    [Fact]
+    public void Unreadable_vault_is_quarantined_and_replaced_instead_of_wedging_the_app()
+    {
+        // A Windows profile reset/migration makes DPAPI decryption fail forever.
+        // The app must recover to a fresh vault (USB re-pair heals ownership),
+        // not throw the same CryptographicException on every operation.
+        var path = TempFile();
+        try
+        {
+            new CredentialVault(path, new ReversibleTestProtector())
+                .Put("device-1", new byte[] { 1, 2, 3 });
+
+            var broken = new CredentialVault(path, new ThrowingProtector());
+            var data = broken.Load();
+
+            Assert.True(broken.RecoveredFromUnreadableVault);
+            Assert.Empty(data.Devices);
+            Assert.True(File.Exists(path + ".unreadable"));
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(path + ".unreadable");
+        }
+    }
+
+    [Fact]
+    public void Vault_with_garbage_plaintext_is_quarantined_and_replaced()
+    {
+        var path = TempFile();
+        try
+        {
+            File.WriteAllBytes(path, "{ not valid json"u8.ToArray().Reverse().ToArray());
+
+            var vault = new CredentialVault(path, new ReversibleTestProtector());
+            var data = vault.Load();
+
+            Assert.True(vault.RecoveredFromUnreadableVault);
+            Assert.Empty(data.Devices);
+            Assert.True(File.Exists(path + ".unreadable"));
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(path + ".unreadable");
+        }
+    }
+
+    [Fact]
+    public void Healthy_vault_does_not_report_recovery()
+    {
+        var path = TempFile();
+        try
+        {
+            var vault = new CredentialVault(path, new ReversibleTestProtector());
+            vault.Put("device-1", new byte[] { 1 });
+
+            var reopened = new CredentialVault(path, new ReversibleTestProtector());
+            reopened.Load();
+
+            Assert.False(reopened.RecoveredFromUnreadableVault);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    sealed class ThrowingProtector : ISecretProtector
+    {
+        public byte[] Protect(byte[] plaintext) => plaintext;
+        public byte[] Unprotect(byte[] ciphertext) =>
+            throw new System.Security.Cryptography.CryptographicException(
+                "Key not valid for use in specified state.");
+    }
+
     sealed class ReversibleTestProtector : ISecretProtector
     {
         public byte[] Protect(byte[] plaintext) => plaintext.Reverse().ToArray();

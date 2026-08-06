@@ -41,6 +41,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         App.TrackPlacement(this, "Main");
         Loaded += (_, _) => this.ExcludeFromCapture();   // control app never appears in a tournament screenshot
+        Loaded += (_, _) => WarnIfCredentialVaultWasRecovered();
         LstMedia.ItemsSource = _media;
         LstPlaylist.ItemsSource = _playlist;
         _playlist.CollectionChanged += (_, _) => SetDirty(true);
@@ -85,6 +86,26 @@ public partial class MainWindow : Window
             Close();
         }
         // No -> close without saving
+    }
+
+    // A vault that stopped decrypting (Windows profile change) is quarantined
+    // and replaced on first read; without this message the user would just see
+    // every Pi as unpaired with no explanation.
+    void WarnIfCredentialVaultWasRecovered()
+    {
+        try
+        {
+            _credentialVault.Load();
+        }
+        catch (System.Exception)
+        {
+            return;   // disk trouble; connection attempts will surface their own errors
+        }
+        if (!_credentialVault.RecoveredFromUnreadableVault) return;
+        Toaster.Show(
+            "This computer's saved Pi credentials couldn't be read anymore — " +
+            "this happens after a Windows profile change. Plug each Pi in over " +
+            "USB and run Set up a new Pi to pair it again.");
     }
 
     // Probe every saved Pi in parallel and set the dropdown's online dots.

@@ -105,6 +105,14 @@ public partial class WifiSetupWindow : Window
 
     async Task DetectLoop(CancellationToken cancellationToken)
     {
+        var blocker = OnboardingPolicy.UsbSetupBlocker(Environment.OSVersion.Version);
+        if (blocker is not null)
+        {
+            DetectStatus.Text = blocker;
+            Detecting.Visibility = Visibility.Collapsed;
+            BtnCancelDetect.Visibility = Visibility.Collapsed;
+            return;
+        }
         for (int i = 0; i < 60 && !_detected; i++)   // ~60s of polling
         {
             if (await _wifi.DetectAsync(PiUsbBase, cancellationToken))

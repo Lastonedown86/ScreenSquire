@@ -65,6 +65,57 @@ public class PairingClientTests
     }
 
     [Fact]
+    public async Task Pair_maps_a_wrong_pin_to_advice_about_the_case_sticker()
+    {
+        var client = new PairingClient(new HttpClient(
+            new StatusHandler(HttpStatusCode.Unauthorized)));
+
+        var error = await Assert.ThrowsAsync<PairingRejectedException>(() =>
+            client.PairAsync("http://10.55.0.1:8080", "12345678", ControllerId));
+
+        Assert.Contains("sticker", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("401", error.Message);
+    }
+
+    [Fact]
+    public async Task Pair_maps_throttling_to_a_wait_with_the_retry_after_seconds()
+    {
+        var handler = new StatusHandler((HttpStatusCode)429, retryAfterSeconds: 45);
+        var client = new PairingClient(new HttpClient(handler));
+
+        var error = await Assert.ThrowsAsync<PairingRejectedException>(() =>
+            client.PairAsync("http://10.55.0.1:8080", "12345678", ControllerId));
+
+        Assert.Contains("45", error.Message);
+        Assert.Contains("wait", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Pair_maps_throttling_without_a_header_to_a_sixty_second_wait()
+    {
+        var client = new PairingClient(new HttpClient(
+            new StatusHandler((HttpStatusCode)429)));
+
+        var error = await Assert.ThrowsAsync<PairingRejectedException>(() =>
+            client.PairAsync("http://10.55.0.1:8080", "12345678", ControllerId));
+
+        Assert.Contains("60", error.Message);
+    }
+
+    [Fact]
+    public async Task Pair_maps_an_unavailable_identity_store_to_plain_language()
+    {
+        var client = new PairingClient(new HttpClient(
+            new StatusHandler(HttpStatusCode.ServiceUnavailable)));
+
+        var error = await Assert.ThrowsAsync<PairingRejectedException>(() =>
+            client.PairAsync("http://10.55.0.1:8080", "12345678", ControllerId));
+
+        Assert.DoesNotContain("503", error.Message);
+        Assert.NotEmpty(error.Message);
+    }
+
+    [Fact]
     public async Task Pair_honors_cancellation()
     {
         using var cancellation = new CancellationTokenSource();
@@ -96,6 +147,25 @@ public class PairingClientTests
             {
                 Content = new StringContent(response(request), Encoding.UTF8, "application/json"),
             };
+        }
+    }
+
+    sealed class StatusHandler(HttpStatusCode status, int? retryAfterSeconds = null)
+        : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var response = new HttpResponseMessage(status)
+            {
+                Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+            };
+            if (retryAfterSeconds is int seconds)
+                response.Headers.RetryAfter =
+                    new System.Net.Http.Headers.RetryConditionHeaderValue(
+                        TimeSpan.FromSeconds(seconds));
+            return Task.FromResult(response);
         }
     }
 

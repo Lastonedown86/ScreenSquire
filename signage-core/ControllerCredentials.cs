@@ -48,6 +48,11 @@ public sealed class CredentialVault
 
     public string Path { get; }
 
+    /// <summary>True once an unreadable vault (DPAPI failure after a Windows
+    /// profile change, corrupt file) was moved aside and replaced with a fresh
+    /// one. The UI uses this to tell the operator to re-pair over USB.</summary>
+    public bool RecoveredFromUnreadableVault { get; private set; }
+
     public static string DefaultPath()
     {
         var dir = System.IO.Path.Combine(
@@ -142,12 +147,40 @@ public sealed class CredentialVault
             return created;
         }
 
-        var protectedBytes = File.ReadAllBytes(Path);
-        var json = _protector.Unprotect(protectedBytes)
-            ?? throw new InvalidDataException("Secret protector returned no plaintext.");
-        var data = JsonSerializer.Deserialize<CredentialVaultData>(json, JsonOptions);
-        ValidateData(data);
-        return data!;
+        try
+        {
+            var protectedBytes = File.ReadAllBytes(Path);
+            var json = _protector.Unprotect(protectedBytes)
+                ?? throw new InvalidDataException("Secret protector returned no plaintext.");
+            var data = JsonSerializer.Deserialize<CredentialVaultData>(json, JsonOptions);
+            ValidateData(data);
+            return data!;
+        }
+        catch (Exception ex) when (
+            ex is CryptographicException or JsonException or InvalidDataException)
+        {
+            // A vault that can no longer be decrypted (Windows profile reset or
+            // migration) or parsed would otherwise fail every operation forever.
+            // Quarantine it and start fresh: ownership is re-established with the
+            // Recovery PIN over USB, never from this file.
+            QuarantineUnreadableVault();
+            RecoveredFromUnreadableVault = true;
+            var created = new CredentialVaultData();
+            SaveCore(created);
+            return created;
+        }
+    }
+
+    void QuarantineUnreadableVault()
+    {
+        try
+        {
+            File.Move(Path, Path + ".unreadable", overwrite: true);
+        }
+        catch (IOException)
+        {
+            try { File.Delete(Path); } catch (IOException) { }
+        }
     }
 
     void SaveCore(CredentialVaultData data)
