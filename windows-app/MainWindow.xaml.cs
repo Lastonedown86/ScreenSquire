@@ -272,7 +272,7 @@ public partial class MainWindow : Window
     private async Task CheckForAppUpdateAsync()
     {
         if (_appUpdateChecking) return;
-        if (App.CurrentVersion == PiSignage.Signage.AppUpdate.DevBuild) return;
+        if (PiSignage.Signage.AppUpdate.IsDevBuild(App.CurrentVersion)) return;
         if (string.IsNullOrEmpty(App.ExePath)) return;
         if (Path.GetDirectoryName(App.ExePath) is not string exeDir) return;
 

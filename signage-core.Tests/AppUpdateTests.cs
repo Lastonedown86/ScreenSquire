@@ -69,6 +69,17 @@ public class AppUpdateTests : IDisposable
             AppUpdate.DisplayVersion("0.0.0+abc123", AppUpdate.DevBuild));
     }
 
+    [Fact]
+    public void DisplayVersion_marks_the_four_part_version_the_runtime_reports_as_development()
+    {
+        // Assembly.GetName().Version round-trips through metadata as four
+        // parts, so an unstamped build arrives here as 0.0.0.0 — never as the
+        // hand-written 3-part sentinel.
+        Assert.Equal(
+            "0.0.0 (development build)",
+            AppUpdate.DisplayVersion("0.0.0+abc123", Version.Parse("0.0.0.0")));
+    }
+
     // ---------- release parsing ----------
 
     [Fact]
@@ -128,6 +139,7 @@ public class AppUpdateTests : IDisposable
     [InlineData("2026.8.1.1", "2026.7.26.1", null, false)]   // never downgrade
     [InlineData("2026.8.1.1", "2026.8.1.1", null, false)]    // already current
     [InlineData("0.0.0", "2026.8.1.1", null, false)]         // developer build
+    [InlineData("0.0.0.0", "2026.8.1.1", null, false)]       // dev build as the runtime reports it
     [InlineData("2026.7.26.1", "2026.8.1.1", "2026.8.1.1", false)]  // already staged
     [InlineData("2026.7.26.1", "2026.8.1.1", "2026.7.27.1", true)]  // staged one is stale
     public void ShouldDownload(string current, string candidate, string? staged, bool expected)
