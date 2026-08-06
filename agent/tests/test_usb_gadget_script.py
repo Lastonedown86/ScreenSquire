@@ -72,6 +72,18 @@ def test_fresh_boot_with_a_ready_udc_creates_and_binds_the_gadget(fake_sys):
     assert (gadget / "UDC").read_text().strip() == "fe980000.usb"
 
 
+def test_gadget_includes_a_serial_console_function(fake_sys):
+    """The agent is otherwise the only door into a shipped Pi. The ACM
+    function gives the builder a login console over the same USB cable when
+    the agent itself is down (guided via Quick Assist on the store laptop)."""
+    (fake_sys / UDC_CLASS / "fe980000.usb").mkdir()
+
+    result = _run(fake_sys)
+
+    assert result.returncode == 0, result.stderr
+    assert (fake_sys / GADGET / "functions" / "acm.usb0").is_dir()
+
+
 def test_no_udc_fails_loudly_instead_of_silently_not_binding(fake_sys):
     result = _run(fake_sys)
 

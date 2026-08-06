@@ -32,6 +32,12 @@ if [ ! -d "$G" ]; then
   echo "NCM" > configs/c.1/strings/0x409/configuration
   mkdir -p functions/ncm.usb0
   ln -sf functions/ncm.usb0 configs/c.1/
+  # serial console on the same cable: the agent is otherwise the only door
+  # into a shipped Pi, and a login prompt over USB (serial-getty@ttyGS0, see
+  # provision-usb.sh) lets the builder talk a customer through recovery when
+  # the agent is down. Requires the Pi login password, like a local keyboard.
+  mkdir -p functions/acm.usb0
+  ln -sf functions/acm.usb0 configs/c.1/
 fi
 
 bound="$(cat "$G/UDC" 2>/dev/null | tr -d '[:space:]')"
