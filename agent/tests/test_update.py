@@ -365,6 +365,122 @@ def test_update_rolls_back_entire_bundle_when_a_swap_fails(
     assert (app_dir / "static" / "removed.html").read_text() == "<stale>"
 
 
+def test_update_writes_pending_marker_before_the_swap_begins(
+    agent_module,
+    signed,
+    tmp_path,
+    monkeypatch,
+):
+    """Power loss mid-swap must leave the marker on disk so update-recover.sh
+    restores the backup at boot. That only works if the marker exists before
+    the first installed path changes."""
+    app_dir = _fake_app_dir(agent_module, tmp_path, monkeypatch)
+    real_replace = agent_module.os.replace
+    marker_present_at_first_swap = []
+
+    def spy_replace(source, destination):
+        if (
+            Path(destination).parent == app_dir
+            and Path(destination).name != "update-pending"
+            and not marker_present_at_first_swap
+        ):
+            marker_present_at_first_swap.append(
+                (app_dir / "update-pending").exists()
+            )
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(agent_module.os, "replace", spy_replace)
+
+    response = _post(signed, _zip_bytes(GOOD_BUNDLE))
+
+    assert response.status_code == 200
+    assert marker_present_at_first_swap == [True]
+    assert (app_dir / "update-pending").read_text().strip() == "0"
+
+
+def test_update_removes_pending_marker_after_a_complete_rollback(
+    agent_module,
+    signed,
+    tmp_path,
+    monkeypatch,
+):
+    app_dir = _fake_app_dir(agent_module, tmp_path, monkeypatch)
+    real_replace = agent_module.os.replace
+    injected = [False]
+
+    def fail_once(source, destination):
+        if Path(destination) == app_dir / "delivery_reset.py" and not injected[0]:
+            injected[0] = True
+            raise OSError("injected swap failure")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(agent_module.os, "replace", fail_once)
+
+    response = _post(signed, _zip_bytes(GOOD_BUNDLE))
+
+    assert injected[0]
+    assert response.status_code == 500
+    assert not (app_dir / "update-pending").exists()
+
+
+def test_update_keeps_pending_marker_when_rollback_is_incomplete(
+    agent_module,
+    signed,
+    tmp_path,
+    monkeypatch,
+):
+    """An incomplete rollback leaves a broken install; the marker must survive
+    so update-recover.sh restores the backup on the next start."""
+    app_dir = _fake_app_dir(agent_module, tmp_path, monkeypatch)
+    real_replace = agent_module.os.replace
+
+    def always_fail_delivery_reset(source, destination):
+        if Path(destination) == app_dir / "delivery_reset.py":
+            raise OSError("injected persistent failure")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(agent_module.os, "replace", always_fail_delivery_reset)
+
+    response = _post(signed, _zip_bytes(GOOD_BUNDLE))
+
+    assert response.status_code == 500
+    assert "incomplete" in response.json()["detail"].lower()
+    assert (app_dir / "update-pending").exists()
+
+
+def test_startup_confirmation_clears_marker_and_backup(
+    agent_module,
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(agent_module, "APP_DIR", tmp_path)
+    (tmp_path / "update-pending").write_text("1\n")
+    backup = tmp_path / "update-backup"
+    backup.mkdir()
+    (backup / "main.py").write_text("OLD")
+
+    agent_module._confirm_update_startup()
+
+    assert not (tmp_path / "update-pending").exists()
+    assert not backup.exists()
+
+
+def test_startup_confirmation_is_a_no_op_without_a_marker(
+    agent_module,
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(agent_module, "APP_DIR", tmp_path)
+    backup = tmp_path / "update-backup"
+    backup.mkdir()
+    (backup / "main.py").write_text("OLD")
+
+    agent_module._confirm_update_startup()
+
+    # no marker means no update in flight; leave the backup untouched
+    assert backup.exists()
+
+
 def test_update_happy_path_swaps_files_and_backs_up(
     agent_module,
     signed,
@@ -385,5 +501,6 @@ def test_update_happy_path_swaps_files_and_backs_up(
     assert not [
         path
         for path in app_dir.iterdir()
-        if path.name.startswith("update-") and path.name != "update-backup"
+        if path.name.startswith("update-")
+        and path.name not in {"update-backup", "update-pending"}
     ]

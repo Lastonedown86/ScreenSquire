@@ -63,7 +63,7 @@ PLAYLIST_FILE = DATA_DIR / "playlist.json"
 PORT = int(os.environ.get("SIGNAGE_PORT", "8080"))
 NAME_FILE = DATA_DIR / "name.txt"
 TRUST_FILE = DATA_DIR / "trust.json"
-AGENT_VERSION = "2026.07.26.9"  # bump on every agent change; the app compares this
+AGENT_VERSION = "2026.08.06.1"  # bump on every agent change; the app compares this
 
 
 def _load_name() -> str:
@@ -372,6 +372,9 @@ def _primary_ip() -> str:
 # ---------------------------------------------------------------- app
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # reaching startup means the last pushed update runs; retire its recovery
+    # marker so update-recover.sh never rolls a healthy install back
+    _confirm_update_startup()
     # heal the kiosk launcher before anything else: after a pushed update this
     # is what applies new Chromium flags to already-provisioned Pis
     await _sync_kiosk_script()
@@ -922,7 +925,57 @@ _UPDATE_REQUIRED_STATIC_FILES = frozenset(
     {"static/kiosk.html", "static/dashboard.html"}
 )
 _VERSION_RE = re.compile(r'AGENT_VERSION\s*=\s*"([^"]+)"')
+# Contract with pi-setup/update-recover.sh (ExecStartPre= on the agent unit):
+# this marker is written durably before the swap touches any installed path and
+# deleted by a healthy startup. While it exists the recovery script counts
+# failed starts and, past its limit, restores update-backup — so a bundle that
+# compiles but cannot run, or a half-swapped install after power loss, cannot
+# crash-loop a remote Pi forever.
+_UPDATE_PENDING_NAME = "update-pending"
 _restart_task: Optional[asyncio.Task] = None  # strong ref: keep the restart task from being GC'd
+
+
+def _fsync_path(path: Path) -> None:
+    flags = os.O_RDONLY | (getattr(os, "O_DIRECTORY", 0) if path.is_dir() else 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        return  # directories aren't openable on some platforms; best effort
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def _fsync_tree(root: Path) -> None:
+    for path in root.rglob("*"):
+        if path.is_file():
+            _fsync_path(path)
+
+
+def _write_pending_marker() -> None:
+    fd, temporary_name = tempfile.mkstemp(dir=APP_DIR, prefix=".update-pending.")
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write("0\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_name, APP_DIR / _UPDATE_PENDING_NAME)
+        _fsync_path(APP_DIR)
+    except BaseException:
+        Path(temporary_name).unlink(missing_ok=True)
+        raise
+
+
+def _confirm_update_startup() -> None:
+    marker = APP_DIR / _UPDATE_PENDING_NAME
+    if not marker.exists():
+        return
+    shutil.rmtree(APP_DIR / "update-backup", ignore_errors=True)
+    marker.unlink(missing_ok=True)
+    log.info("Agent started cleanly after an update; recovery marker cleared")
 
 
 async def _restart_after_update() -> None:
@@ -1051,6 +1104,11 @@ async def update_agent(
         if (APP_DIR / "static").exists():
             shutil.copytree(APP_DIR / "static", backup / "static")
 
+        # The staged files must be durable before they are swapped in: a
+        # power cut after the restart must never leave truncated modules.
+        _fsync_tree(staged)
+        _write_pending_marker()
+
         rollback = tmp / "rollback"
         rollback.mkdir()
         managed_paths = [*sorted(_UPDATE_ROOT_FILES), "static"]
@@ -1078,6 +1136,8 @@ async def update_agent(
                 except OSError as rollback_error:
                     rollback_errors.append(f"{relative}: {rollback_error}")
             if rollback_errors:
+                # leave the marker: if this process can no longer start, the
+                # recovery script restores update-backup on the next boot
                 log.critical(
                     "Agent update rollback was incomplete: %s",
                     "; ".join(rollback_errors),
@@ -1086,6 +1146,7 @@ async def update_agent(
                     500,
                     "Agent update failed and rollback was incomplete",
                 ) from install_error
+            (APP_DIR / _UPDATE_PENDING_NAME).unlink(missing_ok=True)
             raise HTTPException(
                 500,
                 "Agent update failed; previous bundle restored",
