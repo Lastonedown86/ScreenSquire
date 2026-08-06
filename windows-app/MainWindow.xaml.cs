@@ -332,6 +332,19 @@ public partial class MainWindow : Window
         PnlUpdateBanner.Visibility = Visibility.Visible;
     }
 
+    // MessageBox rather than a window of its own: About has one fact to state,
+    // and a dedicated .xaml would be more file than content.
+    private void MnuAbout_Click(object sender, RoutedEventArgs e)
+    {
+        MessageBox.Show(
+            this,
+            $"ScreenSquire\nVersion {App.DisplayVersion}\n\n" +
+            "The app keeps itself up to date, and updates the TVs overnight.",
+            "About ScreenSquire",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
+    }
+
     private void BtnRestartForUpdate_Click(object sender, RoutedEventArgs e)
     {
         if (string.IsNullOrEmpty(App.ExePath)) return;

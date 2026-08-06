@@ -18,6 +18,15 @@ public partial class App : Application
     public static Version CurrentVersion =>
         typeof(App).Assembly.GetName().Version ?? AppUpdate.DevBuild;
 
+    /// <summary>What Help &gt; About shows. Matches the release tag, so a store
+    /// can report the version they are actually running.</summary>
+    public static string DisplayVersion => AppUpdate.DisplayVersion(
+        System.Reflection.CustomAttributeExtensions
+            .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(
+                typeof(App).Assembly)
+            ?.InformationalVersion,
+        CurrentVersion);
+
     /// <summary>Sits beside devices.json and settings.json.</summary>
     public static string UpdateStageDir { get; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
