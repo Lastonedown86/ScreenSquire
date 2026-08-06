@@ -158,6 +158,12 @@ screen sharing/control for that session. End Quick Assist when work is done.
 Do not install unattended remote-access software, copy controller secrets, or
 pair the builder laptop to a production Pi.
 
+If the Pi's software is down and it no longer answers at `10.55.0.1`, the same
+USB cable also carries a serial login console: a COM port appears in Windows
+Device Manager, and a terminal (for example PuTTY) at 115200 baud reaches a
+login prompt. It requires the Pi's login password — the builder uses this over
+Quick Assist as a last-resort repair door instead of asking for the unit back.
+
 ## API summary
 
 | Access | Method | Path | Purpose |

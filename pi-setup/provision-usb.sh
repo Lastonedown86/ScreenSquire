@@ -75,5 +75,11 @@ rm -f "$TMP_SUDO"
 sudo raspi-config nonint do_vnc 1
 
 sudo systemctl enable usb-gadget-ncm.service
+
+# 8. Login console on the USB gadget's serial function (ttyGS0). Last-resort
+#    recovery door for a shipped Pi whose agent is down: the builder guides the
+#    store through a terminal on the COM port that appears beside the USB
+#    network. Needs the Pi's login password — same trust as a local keyboard.
+sudo systemctl enable serial-getty@ttyGS0.service
 echo "==> USB provisioning installed. Reboot, then this Pi presents a USB setup link at 10.55.0.1:8080."
 echo "    Remote support: use attended Windows Quick Assist on the store laptop."
