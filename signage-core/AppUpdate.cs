@@ -29,6 +29,12 @@ public static class AppUpdate
     /// is running this from a developer machine; leave it entirely alone.</summary>
     public static readonly Version DevBuild = new(0, 0, 0);
 
+    /// <summary>Never compare against DevBuild with ==: Assembly.GetName().Version
+    /// round-trips through metadata as four parts, so an unstamped build reports
+    /// 0.0.0.0, which is not equal to the 3-part sentinel.</summary>
+    public static bool IsDevBuild(Version version)
+        => version.Major == 0 && version.Minor == 0;
+
     static readonly JsonSerializerOptions Opts = new() { WriteIndented = true };
 
     /// <summary>Pull the release shape out of the GitHub API response, rejecting
@@ -93,13 +99,13 @@ public static class AppUpdate
         if (string.IsNullOrWhiteSpace(shown)) shown = assembly.ToString();
         // A build nobody stamped. Say so, rather than show a bare 0.0.0 that
         // looks like a real version someone might report.
-        return assembly == DevBuild ? $"{shown} (development build)" : shown;
+        return IsDevBuild(assembly) ? $"{shown} (development build)" : shown;
     }
 
     /// <summary>Is this release worth the download?</summary>
     public static bool ShouldDownload(Version current, Version candidate, Version? staged)
     {
-        if (current == DevBuild) return false;         // never touch a local build
+        if (IsDevBuild(current)) return false;         // never touch a local build
         if (candidate <= current) return false;        // current, or a downgrade
         if (staged is not null && staged >= candidate) return false;   // already have it
         return true;
