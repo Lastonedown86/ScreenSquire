@@ -62,13 +62,19 @@ def test_initialize_writes_private_file_with_expected_shape(tmp_path, monkeypatc
     assert data["controller_id"] is None
     assert data["controller_secret"] is None
     assert data["last_counter"] == 0
-    assert len(chmod_calls) == 1
-    assert chmod_calls[0][0].parent == path.parent
-    assert chmod_calls[0][0] != path
-    assert chmod_calls[0][1] == 0o600
+    # two writes: trust.json and its identity backup, both private
+    assert len(chmod_calls) == 2
+    for chmod_path, mode in chmod_calls:
+        assert chmod_path.parent == path.parent
+        assert chmod_path != path
+        assert mode == 0o600
     if os.name != "nt":
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    assert list(path.parent.iterdir()) == [path]
+        assert stat.S_IMODE((tmp_path / "nested" / "trust.json.bak").stat().st_mode) == 0o600
+    # nothing else left behind (no orphaned temp files)
+    assert sorted(path.parent.iterdir()) == sorted(
+        [path, path.with_name("trust.json.bak")]
+    )
 
 
 def test_pair_returns_unique_secret_and_replaces_previous_controller(tmp_path):

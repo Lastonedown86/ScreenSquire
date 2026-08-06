@@ -79,6 +79,9 @@ async def prepare_for_delivery(
     set_device_name: Callable[[str], None],
     run: CommandRunner,
     clear_controller: Callable[[], None],
+    kiosk_profile_dir: Path,
+    stop_kiosk: Callable[[], Awaitable[None]],
+    start_kiosk: Callable[[], Awaitable[None]],
 ) -> None:
     """Erase customer state, removing controller trust strictly last.
 
@@ -111,6 +114,14 @@ async def prepare_for_delivery(
     set_device_name(socket.gethostname())
 
     state.bump()
+
+    # Builder sign-ins (Spotify, YouTube) live in the kiosk's persistent
+    # Chromium profile and must never ship. Chromium cannot be running while
+    # its profile is deleted, or it rewrites parts of it on exit.
+    await stop_kiosk()
+    if kiosk_profile_dir.exists():
+        shutil.rmtree(kiosk_profile_dir)
+    await start_kiosk()
 
     await _delete_wifi_profiles(run)
 
