@@ -43,6 +43,7 @@ WorkingDirectory=$AGENT_DIR
 Environment=SIGNAGE_PORT=8080
 Environment=XDG_RUNTIME_DIR=/run/user/$USER_UID
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$USER_UID/bus
+ExecStartPre=/bin/bash $APP_DIR/pi-setup/update-recover.sh $AGENT_DIR
 ExecStart=$AGENT_DIR/.venv/bin/python main.py
 Restart=always
 RestartSec=3
