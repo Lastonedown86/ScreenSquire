@@ -65,6 +65,87 @@ def test_wifi_connect_failure_hides_password(
     assert "Secrets were required" in body["error"]
     assert "secret123" not in body["error"]   # password never leaks
 
+def test_wifi_success_reregisters_mdns_with_the_new_address(
+    agent_module,
+    paired_signer,
+    monkeypatch,
+):
+    """After Store onboarding the Pi moves from USB-only to store Wi-Fi; the
+    mDNS advertisement captured at boot (often loopback) must be replaced or
+    the app can never discover the Pi without a power cycle."""
+    def script(cmd):
+        if cmd[:4] == ["sudo", "nmcli", "dev", "wifi"]:
+            return (0, "activated", "")
+        if cmd[:2] == ["nmcli", "-t"] and "IP4.ADDRESS" in cmd:
+            return (0, "IP4.ADDRESS[1]:192.168.1.42/24\n", "")
+        return (0, "", "")
+    monkeypatch.setattr(agent_module, "_run", _fake_run(script))
+    refreshed = []
+
+    async def fake_refresh():
+        refreshed.append(True)
+
+    monkeypatch.setattr(agent_module, "_refresh_mdns", fake_refresh)
+
+    r = _signed_usb_wifi(
+        agent_module,
+        paired_signer,
+        {"ssid": "Shop", "password": "secret123"},
+    )
+
+    assert r.json()["ok"] is True
+    assert refreshed == [True]
+
+
+def test_wifi_failure_does_not_touch_mdns(
+    agent_module,
+    paired_signer,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        agent_module, "_run", _fake_run(lambda cmd: (4, "", "no secrets"))
+    )
+    refreshed = []
+
+    async def fake_refresh():
+        refreshed.append(True)
+
+    monkeypatch.setattr(agent_module, "_refresh_mdns", fake_refresh)
+
+    r = _signed_usb_wifi(
+        agent_module,
+        paired_signer,
+        {"ssid": "Shop", "password": "secret123"},
+    )
+
+    assert r.json()["ok"] is False
+    assert refreshed == []
+
+
+def test_refresh_mdns_replaces_the_stale_registration(agent_module, monkeypatch):
+    closed = []
+
+    class FakeZeroconf:
+        def close(self):
+            closed.append(True)
+
+    agent_module._mdns_state["zc"] = FakeZeroconf()
+    registered = []
+
+    def fake_register():
+        registered.append(True)
+        return "new-zc"
+
+    monkeypatch.setattr(agent_module, "register_mdns", fake_register)
+
+    import asyncio
+    asyncio.run(agent_module._refresh_mdns())
+
+    assert closed == [True]
+    assert registered == [True]
+    assert agent_module._mdns_state["zc"] == "new-zc"
+
+
 def test_wifi_status_parses(agent_module, client, monkeypatch):
     def script(cmd):
         if "GENERAL.CONNECTION" in cmd:

@@ -85,6 +85,16 @@ def _seed_customer_data(agent_module, tmp_path, monkeypatch):
             },
         },
     )
+    # keep the kiosk-profile wipe away from the real home directory and the
+    # real systemd user manager; tests that care override these afterwards
+    monkeypatch.setattr(
+        agent_module, "KIOSK_PROFILE_DIR", tmp_path / "kiosk-profile"
+    )
+
+    async def _fake_systemctl(*args, timeout=15.0):
+        return 0, "", ""
+
+    monkeypatch.setattr(agent_module, "_systemctl_user", _fake_systemctl)
     agent_module.state.wake.clear()
     return media_dir, playlist_file, dashboard_file, name_file
 
@@ -171,6 +181,102 @@ def test_prepare_delivery_erases_customer_data_but_preserves_identity(
             "customer-wifi-uuid",
         ],
     ]
+
+
+def _seed_kiosk_profile(agent_module, tmp_path, monkeypatch):
+    profile = tmp_path / "kiosk-profile"
+    (profile / "Default").mkdir(parents=True)
+    (profile / "Default" / "Cookies").write_bytes(b"builder spotify session")
+    monkeypatch.setattr(agent_module, "KIOSK_PROFILE_DIR", profile)
+    return profile
+
+
+def test_prepare_delivery_wipes_the_kiosk_browser_profile(
+    agent_module,
+    tmp_path,
+    monkeypatch,
+):
+    """Builder sign-ins (Spotify, Google) live in the persistent Chromium
+    profile; they must never ship to the customer."""
+    _seed_customer_data(agent_module, tmp_path, monkeypatch)
+    profile = _seed_kiosk_profile(agent_module, tmp_path, monkeypatch)
+    kiosk_calls = []
+
+    async def fake_systemctl(*args, timeout=15.0):
+        kiosk_calls.append((args[0], profile.exists()))
+        return 0, "", ""
+
+    async def run(cmd, timeout=30.0):
+        if cmd == ["nmcli", "-t", "-f", "UUID,TYPE", "connection", "show"]:
+            return 0, "", ""
+        raise AssertionError(f"Unexpected command: {cmd!r}")
+
+    monkeypatch.setattr(agent_module, "_systemctl_user", fake_systemctl)
+    monkeypatch.setattr(agent_module, "_run", run)
+
+    response = _paired_request(agent_module, "10.55.0.10")()
+
+    assert response.status_code == 200
+    assert not profile.exists()
+    # kiosk stopped while the profile still existed, restarted after the wipe
+    assert kiosk_calls == [("stop", True), ("start", False)]
+
+
+def test_prepare_delivery_keeps_trust_when_the_kiosk_cannot_be_stopped(
+    agent_module,
+    tmp_path,
+    monkeypatch,
+):
+    """Deleting the profile under a running Chromium would corrupt or resurrect
+    it; fail the reset instead and leave the builder paired to retry."""
+    _seed_customer_data(agent_module, tmp_path, monkeypatch)
+    profile = _seed_kiosk_profile(agent_module, tmp_path, monkeypatch)
+
+    async def fake_systemctl(*args, timeout=15.0):
+        return 1, "", "Failed to stop pisignage-kiosk.service"
+
+    async def run(cmd, timeout=30.0):
+        raise AssertionError("Wi-Fi cleanup must not run after kiosk-stop failure")
+
+    monkeypatch.setattr(agent_module, "_systemctl_user", fake_systemctl)
+    monkeypatch.setattr(agent_module, "_run", run)
+
+    response = _paired_request(
+        agent_module,
+        "10.55.0.10",
+        raise_server_exceptions=False,
+    )()
+
+    assert response.status_code == 500
+    assert profile.exists()
+    assert agent_module.trust_store.controller_id == "test-controller"
+
+
+def test_prepare_delivery_wipes_the_profile_on_machines_without_systemctl(
+    agent_module,
+    tmp_path,
+    monkeypatch,
+):
+    """Dev boxes and WSL have no systemd user manager — there is no kiosk to
+    stop, but the wipe must still happen."""
+    _seed_customer_data(agent_module, tmp_path, monkeypatch)
+    profile = _seed_kiosk_profile(agent_module, tmp_path, monkeypatch)
+
+    async def fake_systemctl(*args, timeout=15.0):
+        raise FileNotFoundError("systemctl")
+
+    async def run(cmd, timeout=30.0):
+        if cmd == ["nmcli", "-t", "-f", "UUID,TYPE", "connection", "show"]:
+            return 0, "", ""
+        raise AssertionError(f"Unexpected command: {cmd!r}")
+
+    monkeypatch.setattr(agent_module, "_systemctl_user", fake_systemctl)
+    monkeypatch.setattr(agent_module, "_run", run)
+
+    response = _paired_request(agent_module, "10.55.0.10")()
+
+    assert response.status_code == 200
+    assert not profile.exists()
 
 
 def test_prepare_delivery_checks_usb_before_consuming_signature(

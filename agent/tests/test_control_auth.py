@@ -357,6 +357,7 @@ def test_pair_and_pair_status_are_usb_only(agent_module):
         "device_id": agent_module.trust_store.device_id,
         "paired": True,
         "controller_id": "windows-controller",
+        "trust_error": None,
     }
     assert "secret" not in json.dumps(status.json()).lower()
     assert "pin" not in json.dumps(status.json()).lower()

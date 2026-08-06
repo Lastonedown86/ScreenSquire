@@ -74,10 +74,17 @@ class PairingGuard:
 class TrustStore:
     def __init__(self, path: Path):
         self.path = Path(path)
+        # identity-only snapshot (device_id + PIN verifier, never controller
+        # trust) so SD-card corruption of trust.json cannot permanently strand
+        # a shipped Pi — the label PIN keeps working and USB re-pairing heals it
+        self.backup_path = self.path.with_name(self.path.name + ".bak")
         self._lock = _path_lock(self.path)
         self._guard = PairingGuard()
+        self.error: str | None = None
         with self._lock:
-            self._data = self._read() if self.path.exists() else None
+            self._data = self._load()
+            if self._data is not None and not self.backup_path.exists():
+                self._save_backup(self._data)
 
     @property
     def device_id(self) -> str:
@@ -116,7 +123,9 @@ class TrustStore:
                 "last_counter": 0,
             }
             self._save(data)
+            self._save_backup(data)
             self._data = data
+            self.error = None
             return pin
 
     def pair(self, pin: str, controller_id: str) -> PairResult:
@@ -202,22 +211,79 @@ class TrustStore:
 
     def _require_data(self) -> dict[str, Any]:
         if self._data is None:
-            raise RuntimeError("Trust is not initialized")
+            raise RuntimeError(self.error or "Trust is not initialized")
         return self._data
 
     def _reload(self) -> dict[str, Any]:
-        self._data = self._read() if self.path.exists() else None
+        self._data = self._load()
         return self._require_data()
+
+    def _load(self) -> dict[str, Any] | None:
+        """Read trust.json, degrading instead of raising: a missing or
+        unreadable store leaves the agent alive with `error` set. Corruption
+        attempts an identity restore from the backup first."""
+        if not self.path.exists():
+            self.error = "Trust is not initialized"
+            return None
+        try:
+            data = self._read()
+        except (OSError, ValueError) as exc:
+            return self._restore_from_backup(f"trust.json is unreadable: {exc}")
+        self.error = None
+        return data
+
+    def _restore_from_backup(self, reason: str) -> dict[str, Any] | None:
+        """Rebuild trust.json from the identity backup with controller trust
+        cleared: a restored replay counter could be stale, so forcing a USB
+        re-pair is the only safe posture."""
+        try:
+            with self.backup_path.open("r", encoding="utf-8") as handle:
+                backup = json.load(handle)
+            if not all(backup.get(k) for k in ("device_id", "pin_salt", "pin_hash")):
+                raise ValueError("backup is missing identity fields")
+            restored = {
+                "device_id": backup["device_id"],
+                "pin_salt": backup["pin_salt"],
+                "pin_hash": backup["pin_hash"],
+                "controller_id": None,
+                "controller_secret": None,
+                "last_counter": 0,
+            }
+            self._save(restored)
+        except (OSError, ValueError):
+            self.error = reason
+            return None
+        self.error = None
+        return restored
 
     def _read(self) -> dict[str, Any]:
         with self.path.open("r", encoding="utf-8") as handle:
             return json.load(handle)
 
     def _save(self, data: dict[str, Any]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._write_json(self.path, data)
+
+    def _save_backup(self, data: dict[str, Any]) -> None:
+        try:
+            self._write_json(
+                self.backup_path,
+                {
+                    "device_id": data["device_id"],
+                    "pin_salt": data["pin_salt"],
+                    "pin_hash": data["pin_hash"],
+                    "controller_id": None,
+                    "controller_secret": None,
+                    "last_counter": 0,
+                },
+            )
+        except (OSError, KeyError):
+            pass  # the backup is best-effort; never fail the primary write
+
+    def _write_json(self, path: Path, data: dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
         fd, temporary_name = tempfile.mkstemp(
-            dir=self.path.parent,
-            prefix=f".{self.path.name}.",
+            dir=path.parent,
+            prefix=f".{path.name}.",
         )
         temporary_path = Path(temporary_name)
         try:
@@ -227,7 +293,7 @@ class TrustStore:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.chmod(temporary_path, 0o600)
-            os.replace(temporary_path, self.path)
+            os.replace(temporary_path, path)
             self._sync_parent_directory()
         except BaseException:
             temporary_path.unlink(missing_ok=True)

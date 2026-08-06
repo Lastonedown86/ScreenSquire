@@ -63,7 +63,7 @@ PLAYLIST_FILE = DATA_DIR / "playlist.json"
 PORT = int(os.environ.get("SIGNAGE_PORT", "8080"))
 NAME_FILE = DATA_DIR / "name.txt"
 TRUST_FILE = DATA_DIR / "trust.json"
-AGENT_VERSION = "2026.08.06.1"  # bump on every agent change; the app compares this
+AGENT_VERSION = "2026.08.06.2"  # bump on every agent change; the app compares this
 
 
 def _load_name() -> str:
@@ -334,6 +334,26 @@ async def _sleep_or_wake(timeout: Optional[float]) -> bool:
 
 
 # ---------------------------------------------------------------- mDNS
+# The advertisement captures one address at registration time. Store
+# onboarding moves the Pi from USB-only (no route -> loopback) onto store
+# Wi-Fi, so /api/wifi re-registers through _refresh_mdns or the Pi stays
+# undiscoverable until a power cycle.
+_mdns_state: dict = {"zc": None}
+
+
+async def _refresh_mdns() -> None:
+    def _swap():
+        stale = _mdns_state.get("zc")
+        if stale is not None:
+            try:
+                stale.close()
+            except Exception:
+                pass
+        _mdns_state["zc"] = register_mdns()
+
+    await asyncio.to_thread(_swap)
+
+
 def register_mdns():
     try:
         from zeroconf import ServiceInfo, Zeroconf
@@ -381,18 +401,19 @@ async def lifespan(app: FastAPI):
     task = asyncio.create_task(scheduler())
     # mDNS can block on odd networks (containers, some VMs) — never let it
     # delay startup; run it in a worker thread and keep the handle for shutdown
-    zc_holder: list = []
 
     async def _mdns_bg():
         zc = await asyncio.to_thread(register_mdns)
         if zc:
-            zc_holder.append(zc)
+            _mdns_state["zc"] = zc
 
     mdns_task = asyncio.create_task(_mdns_bg())
     yield
     task.cancel()
     mdns_task.cancel()
-    for zc in zc_holder:
+    zc = _mdns_state.get("zc")
+    _mdns_state["zc"] = None
+    if zc is not None:
         try:
             zc.close()
         except Exception:
@@ -478,6 +499,10 @@ async def pair_controller(
             "Pairing temporarily blocked",
             headers={"Retry-After": str(exc.retry_after)},
         ) from None
+    except RuntimeError as exc:
+        # trust store missing/unreadable: pairing cannot work, but say so
+        # instead of a 500 the setup wizard can't explain
+        raise HTTPException(503, f"This Pi's identity store is unavailable: {exc}") from None
     return {
         "device_id": trust_store.device_id,
         "controller_id": req.controller_id,
@@ -488,12 +513,40 @@ async def pair_controller(
 @app.get("/api/pair/status")
 async def pair_status(request: Request):
     require_usb(request)
-    controller_id = trust_store.controller_id
+    try:
+        device_id = trust_store.device_id
+        controller_id = trust_store.controller_id
+        trust_error = None
+    except RuntimeError as exc:
+        device_id, controller_id, trust_error = None, None, str(exc)
     return {
-        "device_id": trust_store.device_id,
+        "device_id": device_id,
         "paired": controller_id is not None,
         "controller_id": controller_id,
+        "trust_error": trust_error,
     }
+
+
+# where kiosk.sh keeps the persistent Chromium profile (sign-ins, cookies)
+KIOSK_PROFILE_DIR = Path.home() / ".config" / "pisignage-kiosk"
+
+
+async def _delivery_stop_kiosk() -> None:
+    try:
+        rc, out, err = await _systemctl_user("stop", KIOSK_UNIT)
+    except FileNotFoundError:
+        return  # no systemd user manager here (dev box/WSL): nothing to stop
+    if rc != 0:
+        raise RuntimeError(
+            err.strip() or out.strip() or "Could not stop the kiosk"
+        )
+
+
+async def _delivery_start_kiosk() -> None:
+    try:
+        await _systemctl_user("start", KIOSK_UNIT)
+    except FileNotFoundError:
+        pass
 
 
 def _set_delivery_dashboard(value: dict) -> None:
@@ -521,6 +574,9 @@ async def prepare_delivery(
         set_device_name=_set_delivery_device_name,
         run=_run,
         clear_controller=trust_store.clear_controller,
+        kiosk_profile_dir=KIOSK_PROFILE_DIR,
+        stop_kiosk=_delivery_stop_kiosk,
+        start_kiosk=_delivery_start_kiosk,
     )
     return {"ok": True, "device_id": trust_store.device_id}
 
@@ -661,6 +717,9 @@ async def set_wifi(req: WifiRequest):
         return {"ok": False, "connected": False, "ip": None,
                 "error": (err.strip() or out.strip() or "connect failed")}
     ip = await _wlan_ip()
+    # the boot-time advertisement points at the pre-Wi-Fi address (often
+    # loopback); replace it or discovery at the store needs a power cycle
+    await _refresh_mdns()
     return {"ok": True, "connected": ip is not None, "ip": ip, "error": None}
 
 
@@ -1248,10 +1307,19 @@ async def set_name(req: RenameRequest):
 
 @app.get("/api/status")
 async def status():
+    try:
+        device_id = trust_store.device_id
+        paired = trust_store.controller_id is not None
+        trust_error = None
+    except RuntimeError as exc:
+        # a damaged trust store must not 500 this endpoint: the kiosk waits on
+        # it to paint the TV, and it is the builder's only remote diagnostic
+        device_id, paired, trust_error = None, False, str(exc)
     return {
         "name": DEVICE_NAME,
-        "device_id": trust_store.device_id,
-        "paired": trust_store.controller_id is not None,
+        "device_id": device_id,
+        "paired": paired,
+        "trust_error": trust_error,
         "version": app.version,
         "agent_version": AGENT_VERSION,
         "screens_connected": len(hub.clients),
