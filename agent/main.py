@@ -63,7 +63,7 @@ PLAYLIST_FILE = DATA_DIR / "playlist.json"
 PORT = int(os.environ.get("SIGNAGE_PORT", "8080"))
 NAME_FILE = DATA_DIR / "name.txt"
 TRUST_FILE = DATA_DIR / "trust.json"
-AGENT_VERSION = "2026.08.06.2"  # bump on every agent change; the app compares this
+AGENT_VERSION = "2026.08.06.3"  # bump on every agent change; the app compares this
 
 
 def _load_name() -> str:
@@ -419,6 +419,7 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
     await _stop_wayvnc()
+    await _stop_signin()  # a dying agent must not leave the TV on a login page
 
 
 app = FastAPI(title="Pi Signage Agent", version="0.1.0", lifespan=lifespan)
@@ -1538,6 +1539,140 @@ async def spotify_control(req: SpotifyControlRequest):
         raise HTTPException(400, "seek needs an offset value")
     await hub.broadcast({"type": "sp-control", "action": req.action, "value": req.value})
     return {"ok": True}
+
+
+# ---- Spotify sign-in (windowed browser on the kiosk profile, VNC-driven) ----
+# Full tracks need a Spotify login inside the kiosk's Chromium profile. The app
+# opens a remote-desktop session, then asks us to swap the kiosk for a normal
+# browser window on that same profile at the Spotify page; the operator signs
+# in through the viewer and we put the kiosk back.
+SIGNIN_URL = "https://open.spotify.com/"
+SIGNIN_IDLE_SECONDS = 15 * 60
+_signin_proc = None           # asyncio subprocess (or FakeProc in tests)
+_signin_idle_task = None      # asyncio.Task that ends an abandoned session
+_signin_watch_task = None     # asyncio.Task that heals the kiosk on browser exit
+
+
+class SpotifySigninRequest(BaseModel):
+    running: bool
+
+
+def _wayland_env() -> dict:
+    """The service unit sets XDG_RUNTIME_DIR but not WAYLAND_DISPLAY; find the
+    compositor socket so the spawned Chromium can attach to the TV session."""
+    env = dict(os.environ)
+    if "WAYLAND_DISPLAY" not in env:
+        runtime = env.get("XDG_RUNTIME_DIR")
+        if runtime:
+            sockets = sorted(
+                s for s in Path(runtime).glob("wayland-*")
+                if not s.name.endswith(".lock")
+            )
+            if sockets:
+                env["WAYLAND_DISPLAY"] = sockets[0].name
+    return env
+
+
+async def _spawn_signin_browser():
+    # Seam: tests monkeypatch this so no real browser is launched.
+    chrome = shutil.which("chromium") or shutil.which("chromium-browser")
+    if chrome is None:
+        raise RuntimeError("chromium is not installed")
+    return await asyncio.create_subprocess_exec(
+        chrome,
+        f"--user-data-dir={KIOSK_PROFILE_DIR}",   # the profile the embed player reads
+        "--no-first-run", "--password-store=basic", "--start-maximized",
+        "--ozone-platform=wayland",
+        SIGNIN_URL,
+        env=_wayland_env(),
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE)
+
+
+async def _watch_signin_exit(proc) -> None:
+    """Restart the kiosk when the operator closes the browser window on the Pi
+    instead of finishing through the app."""
+    global _signin_proc, _signin_idle_task, _signin_watch_task
+    try:
+        if getattr(proc, "stderr", None) is not None:
+            await proc.stderr.read()  # drain: Chromium is chatty, a full pipe would stall it
+        await proc.wait()
+    except asyncio.CancelledError:
+        return
+    if _signin_proc is not proc:
+        return  # a stop or respawn already took over this session
+    _signin_proc = None
+    _signin_watch_task = None
+    if _signin_idle_task is not None:
+        _signin_idle_task.cancel()
+        _signin_idle_task = None
+    await _delivery_start_kiosk()
+
+
+async def _stop_signin() -> None:
+    global _signin_proc, _signin_idle_task, _signin_watch_task
+    if _signin_idle_task is not None and _signin_idle_task is not asyncio.current_task():
+        _signin_idle_task.cancel()
+    _signin_idle_task = None
+    if _signin_watch_task is not None:
+        _signin_watch_task.cancel()
+        _signin_watch_task = None
+    proc, _signin_proc = _signin_proc, None
+    if proc is None:
+        return  # nothing was running, so the kiosk was never stopped by us
+    try:
+        proc.terminate()
+        await asyncio.wait_for(proc.wait(), timeout=5)
+    except (ProcessLookupError, asyncio.TimeoutError):
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+    await _delivery_start_kiosk()
+
+
+async def _signin_idle_stop(seconds: int) -> None:
+    """A sign-in session someone walked away from must not strand the TV on a
+    login page — the same backstop idea as the wayvnc idle timeout."""
+    try:
+        await asyncio.sleep(seconds)
+    except asyncio.CancelledError:
+        return
+    await _stop_signin()
+
+
+@app.get("/api/spotify/signin")
+async def spotify_signin_status():
+    running = _signin_proc is not None and _signin_proc.returncode is None
+    return {"running": running}
+
+
+@app.post("/api/spotify/signin", dependencies=[Depends(require_control_mutation)])
+async def spotify_signin(req: SpotifySigninRequest):
+    global _signin_proc, _signin_idle_task, _signin_watch_task
+    if not req.running:
+        await _stop_signin()
+        return {"ok": True, "running": False, "error": None}
+    if _signin_proc is not None and _signin_proc.returncode is None:
+        return {"ok": True, "running": True, "error": None}
+    try:
+        await _delivery_stop_kiosk()
+    except RuntimeError as exc:
+        raise HTTPException(500, f"Could not stop the kiosk: {exc}")
+    try:
+        proc = await _spawn_signin_browser()
+    except Exception as exc:
+        await _delivery_start_kiosk()
+        raise HTTPException(500, f"Could not open the sign-in browser: {exc}")
+    await asyncio.sleep(0.5)   # give Chromium a moment to bind or fail
+    if proc.returncode is not None:
+        err = (await proc.stderr.read()).decode("utf-8", "replace")[:200]
+        await _delivery_start_kiosk()
+        raise HTTPException(500, f"Sign-in browser failed to start: {err.strip()}")
+    _signin_proc = proc
+    _signin_idle_task = asyncio.create_task(_signin_idle_stop(SIGNIN_IDLE_SECONDS))
+    _signin_watch_task = asyncio.create_task(_watch_signin_exit(proc))
+    return {"ok": True, "running": True, "error": None}
 
 
 @app.post("/api/next", dependencies=[Depends(require_control_mutation)])

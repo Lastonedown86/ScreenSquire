@@ -36,9 +36,15 @@
                         ToolTipService.ShowOnDisabled="True"/>
             </WrapPanel>
             <TextBlock x:Name="LblStatus" Foreground="{StaticResource TextMuted}" Margin="0,4,0,0"/>
-            <TextBlock Text="Tracks play 30-second previews unless Spotify is signed in on the TV — use Remote control once to sign in."
-                       Foreground="{StaticResource TextMuted}" FontSize="11" Margin="0,4,0,0"
-                       TextWrapping="Wrap"/>
+            <WrapPanel Margin="0,4,0,0">
+                <TextBlock Text="Tracks play 30-second previews unless Spotify is signed in on the TV."
+                           Foreground="{StaticResource TextMuted}" FontSize="11"
+                           VerticalAlignment="Center" TextWrapping="Wrap"/>
+                <Button x:Name="BtnSignin" Content="Sign _in on TV…" Style="{StaticResource SmallButton}"
+                        Margin="8,0,0,0" Click="Signin_Click"
+                        ToolTip="Opens the Spotify page on the TV and a viewer window — sign in there once, then close the viewer"
+                        ToolTipService.ShowOnDisabled="True"/>
+            </WrapPanel>
         </StackPanel>
 
         <!-- saved links -->

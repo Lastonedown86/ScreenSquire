@@ -340,9 +340,11 @@ seek from the app. There is no volume control — Spotify's embed API doesn't
 offer one; use the TV or amp remote.
 
 - Without a Spotify login on the Pi, tracks play 30-second previews. To get
-  full tracks, open Remote control once, sign into open.spotify.com in the
-  kiosk browser, and close the session — the kiosk profile is persistent, so
-  the login survives restarts.
+  full tracks, click "Sign in on TV…" in the Spotify window: a viewer window
+  opens showing the Spotify page on the TV — sign in there once, then close
+  the viewer and the TV returns to signage. The kiosk profile is persistent,
+  so the login survives restarts. (If the sign-in browser or viewer is simply
+  abandoned, the Pi restores the kiosk on its own after 15 minutes.)
 - Full-track playback also needs Widevine DRM in the Pi's Chromium build. If
   it's missing, playback falls back to previews even when signed in.
 - When a track or playlist finishes, the TV returns to its normal rotation
