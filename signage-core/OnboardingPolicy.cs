@@ -87,6 +87,24 @@ public static class OnboardingPolicy
                 status, controllerId, hasCredential));
     }
 
+    /// <summary>Why USB setup cannot work on this machine, or null when it can.
+    /// The Pi's USB network needs Windows 11's in-box NCM driver — on older
+    /// Windows the Pi enumerates as an unknown device and no amount of cable
+    /// swapping helps, so the wizard must say so instead of blaming the cable.</summary>
+    public static string? UsbSetupBlocker(Version windowsVersion)
+    {
+        ArgumentNullException.ThrowIfNull(windowsVersion);
+        var isWindows11OrNewer =
+            windowsVersion.Major > 10 ||
+            (windowsVersion.Major == 10 && windowsVersion.Build >= 22000);
+        return isWindows11OrNewer
+            ? null
+            : "This computer's version of Windows can't connect to the Pi over " +
+              "USB — that needs Windows 11. Run this one-time Pi setup from a " +
+              "Windows 11 computer (the computer that sets up the Pi becomes " +
+              "its control computer).";
+    }
+
     public static void ValidatePairResult(PairStatus before, PairResult result)
     {
         ArgumentNullException.ThrowIfNull(before);

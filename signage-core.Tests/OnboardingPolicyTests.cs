@@ -138,4 +138,31 @@ public class OnboardingPolicyTests
         Assert.Throws<InvalidDataException>(() =>
             OnboardingPolicy.ValidatePairResult(status, result));
     }
+
+    [Theory]
+    [InlineData(10, 0, 19045)]   // Windows 10 22H2
+    [InlineData(10, 0, 19044)]
+    [InlineData(6, 3, 9600)]     // Windows 8.1
+    public void Usb_setup_is_blocked_on_windows_without_a_native_ncm_driver(
+        int major, int minor, int build)
+    {
+        var blocker = OnboardingPolicy.UsbSetupBlocker(
+            new Version(major, minor, build));
+
+        Assert.NotNull(blocker);
+        Assert.Contains("Windows 11", blocker);
+        // it must not read like a cable problem — that's the wrong advice here
+        Assert.DoesNotContain("cable", blocker, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(10, 0, 22000)]   // Windows 11 initial release
+    [InlineData(10, 0, 26100)]   // Windows 11 24H2
+    [InlineData(11, 0, 1)]       // a future major version
+    public void Usb_setup_is_allowed_on_windows_11_or_newer(
+        int major, int minor, int build)
+    {
+        Assert.Null(OnboardingPolicy.UsbSetupBlocker(
+            new Version(major, minor, build)));
+    }
 }

@@ -7,6 +7,10 @@ public sealed record PairResult(string DeviceId, string ControllerId, byte[] Sec
 
 public sealed record PairStatus(string DeviceId, bool Paired, string? ControllerId);
 
+/// <summary>The Pi refused the pairing for a reason the store operator can fix.
+/// The message is written for a person at the setup wizard, not for a log.</summary>
+public sealed class PairingRejectedException(string message) : Exception(message);
+
 public sealed class PairingClient(HttpClient http)
 {
     public async Task<PairResult> PairAsync(
@@ -20,6 +24,24 @@ public sealed class PairingClient(HttpClient http)
             endpoint,
             new { recovery_pin = pin, controller_id = controllerId },
             cancellationToken);
+        switch ((int)response.StatusCode)
+        {
+            case 401:
+                throw new PairingRejectedException(
+                    "That PIN doesn't match this Pi. Check the 8-digit number " +
+                    "on the sticker on the bottom of the Pi's case and try again.");
+            case 429:
+                var wait = (int?)response.Headers.RetryAfter?.Delta?.TotalSeconds is int s && s > 0
+                    ? s
+                    : 60;
+                throw new PairingRejectedException(
+                    $"Too many PIN attempts. Wait {wait} seconds, then try again.");
+            case 503:
+                throw new PairingRejectedException(
+                    "This Pi can't accept pairing right now because its identity " +
+                    "storage is unavailable. Unplug the Pi's power, plug it back " +
+                    "in, and try again — if that doesn't help, contact your installer.");
+        }
         response.EnsureSuccessStatusCode();
         var wire = await response.Content.ReadFromJsonAsync<PairResponse>(
             cancellationToken: cancellationToken)
