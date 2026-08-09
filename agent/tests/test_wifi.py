@@ -158,6 +158,77 @@ def test_wifi_status_parses(agent_module, client, monkeypatch):
     assert s["connected"] is True and s["ssid"] == "ShopWiFi" and s["ip"] == "192.168.1.42"
 
 
+SCAN_PREFIX = ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY", "dev", "wifi", "list"]
+
+
+def _usb_get(agent_module, path):
+    with TestClient(
+        agent_module.app,
+        client=("10.55.0.10", 50000),
+    ) as usb_client:
+        return usb_client.get(path)
+
+
+def test_wifi_networks_dedupes_sorts_and_drops_hidden(agent_module, monkeypatch):
+    def script(cmd):
+        if cmd[: len(SCAN_PREFIX)] == SCAN_PREFIX:
+            return (0,
+                    "StoreNet:52:WPA2\n"
+                    "Caf\\:eNet:70:WPA1 WPA2\n"
+                    ":45:WPA2\n"          # hidden network — no name to pick
+                    "StoreNet:87:WPA2\n"  # same SSID, other band/AP
+                    "OpenNet:30:\n",
+                    "")
+        return (0, "", "")
+    monkeypatch.setattr(agent_module, "_run", _fake_run(script))
+    r = _usb_get(agent_module, "/api/wifi/networks")
+    assert r.status_code == 200
+    assert r.json()["networks"] == [
+        {"ssid": "StoreNet", "signal": 87, "security": "WPA2"},
+        {"ssid": "Caf:eNet", "signal": 70, "security": "WPA1 WPA2"},
+        {"ssid": "OpenNet", "signal": 30, "security": ""},
+    ]
+
+
+def test_wifi_networks_forces_a_fresh_scan(agent_module, monkeypatch):
+    seen = []
+
+    def script(cmd):
+        seen.append(cmd)
+        return (0, "", "")
+    monkeypatch.setattr(agent_module, "_run", _fake_run(script))
+    assert _usb_get(agent_module, "/api/wifi/networks").status_code == 200
+    scan = [c for c in seen if c[: len(SCAN_PREFIX)] == SCAN_PREFIX]
+    assert len(scan) == 1
+    assert scan[0][-2:] == ["--rescan", "yes"]
+    assert "wlan0" in scan[0]
+
+
+def test_wifi_networks_scan_failure_is_an_error_not_an_empty_list(
+    agent_module,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        agent_module, "_run", _fake_run(lambda cmd: (1, "", "wlan0 busy"))
+    )
+    r = _usb_get(agent_module, "/api/wifi/networks")
+    assert r.status_code == 502
+    assert "wlan0 busy" in r.json()["detail"]
+
+
+def test_wifi_networks_rejected_over_lan(agent_module, monkeypatch):
+    monkeypatch.setattr(
+        agent_module, "_run", _fake_run(lambda cmd: (0, "", ""))
+    )
+    with TestClient(
+        agent_module.app,
+        client=("192.168.1.50", 50000),
+    ) as lan_client:
+        r = lan_client.get("/api/wifi/networks")
+    assert r.status_code == 403
+    assert r.json()["detail"] == "USB connection required"
+
+
 def test_wifi_rejects_a_valid_signed_request_over_lan(
     agent_module,
     paired_signer,
