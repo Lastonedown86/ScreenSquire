@@ -98,6 +98,7 @@ public partial class BookmarksWindow : Window
         var connected = _api is not null && _ctx is not null;
         BtnPlay.IsEnabled = connected;
         BtnStop.IsEnabled = connected;
+        BtnSignin.IsEnabled = connected && !_signinActive;
         var full = connected && _supportsYouTube;
         BtnPlayChecked.IsEnabled = full;
         BtnPause.IsEnabled = full;
@@ -109,6 +110,25 @@ public partial class BookmarksWindow : Window
         BtnPause.ToolTip = full ? "Pause or resume the video on the TV" : updateHint;
         BtnBack10.ToolTip = full ? "Jump back ten seconds" : updateHint;
         BtnFwd10.ToolTip = full ? "Jump ahead ten seconds" : updateHint;
+    }
+
+    // One-click YouTube sign-in (age gates, bot checks, Premium) — shared
+    // flow in TvSigninFlow.
+    bool _signinActive;
+
+    async void Signin_Click(object sender, RoutedEventArgs e)
+    {
+        if (_api is null || _ctx is null || CmbDevice.SelectedItem is not SavedDevice dev) return;
+        _signinActive = true;
+        UpdateControls();
+        await TvSigninFlow.RunAsync(this, Toaster, _api, _ctx, dev,
+            "/api/youtube/signin", "YouTube", SigninDone);
+    }
+
+    void SigninDone()
+    {
+        _signinActive = false;
+        UpdateControls();
     }
 
     ControlContext? TryControlContext(string deviceId)

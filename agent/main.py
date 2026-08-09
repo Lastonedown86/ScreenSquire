@@ -1577,19 +1577,24 @@ async def spotify_control(req: SpotifyControlRequest):
     return {"ok": True}
 
 
-# ---- Spotify sign-in (windowed browser on the kiosk profile, VNC-driven) ----
-# Full tracks need a Spotify login inside the kiosk's Chromium profile. The app
-# opens a remote-desktop session, then asks us to swap the kiosk for a normal
-# browser window on that same profile at the Spotify page; the operator signs
-# in through the viewer and we put the kiosk back.
-SIGNIN_URL = "https://open.spotify.com/"
+# ---- Site sign-in (windowed browser on the kiosk profile, VNC-driven) ----
+# Full Spotify tracks and age-gated/bot-checked YouTube playback need a login
+# inside the kiosk's Chromium profile. The app opens a remote-desktop session,
+# then asks us to swap the kiosk for a normal browser window on that same
+# profile at the site's page; the operator signs in through the viewer and we
+# put the kiosk back. One session at a time, shared across sites.
+SIGNIN_URLS = {
+    "spotify": "https://open.spotify.com/",
+    "youtube": "https://www.youtube.com/",
+}
 SIGNIN_IDLE_SECONDS = 15 * 60
 _signin_proc = None           # asyncio subprocess (or FakeProc in tests)
+_signin_site = None           # key into SIGNIN_URLS while a session runs
 _signin_idle_task = None      # asyncio.Task that ends an abandoned session
 _signin_watch_task = None     # asyncio.Task that heals the kiosk on browser exit
 
 
-class SpotifySigninRequest(BaseModel):
+class SigninRequest(BaseModel):
     running: bool
 
 
@@ -1609,7 +1614,7 @@ def _wayland_env() -> dict:
     return env
 
 
-async def _spawn_signin_browser():
+async def _spawn_signin_browser(url):
     # Seam: tests monkeypatch this so no real browser is launched.
     chrome = shutil.which("chromium") or shutil.which("chromium-browser")
     if chrome is None:
@@ -1619,7 +1624,7 @@ async def _spawn_signin_browser():
         f"--user-data-dir={KIOSK_PROFILE_DIR}",   # the profile the embed player reads
         "--no-first-run", "--password-store=basic", "--start-maximized",
         "--ozone-platform=wayland",
-        SIGNIN_URL,
+        url,
         env=_wayland_env(),
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE)
@@ -1628,7 +1633,7 @@ async def _spawn_signin_browser():
 async def _watch_signin_exit(proc) -> None:
     """Restart the kiosk when the operator closes the browser window on the Pi
     instead of finishing through the app."""
-    global _signin_proc, _signin_idle_task, _signin_watch_task
+    global _signin_proc, _signin_site, _signin_idle_task, _signin_watch_task
     try:
         if getattr(proc, "stderr", None) is not None:
             await proc.stderr.read()  # drain: Chromium is chatty, a full pipe would stall it
@@ -1638,6 +1643,7 @@ async def _watch_signin_exit(proc) -> None:
     if _signin_proc is not proc:
         return  # a stop or respawn already took over this session
     _signin_proc = None
+    _signin_site = None
     _signin_watch_task = None
     if _signin_idle_task is not None:
         _signin_idle_task.cancel()
@@ -1646,7 +1652,7 @@ async def _watch_signin_exit(proc) -> None:
 
 
 async def _stop_signin() -> None:
-    global _signin_proc, _signin_idle_task, _signin_watch_task
+    global _signin_proc, _signin_site, _signin_idle_task, _signin_watch_task
     if _signin_idle_task is not None and _signin_idle_task is not asyncio.current_task():
         _signin_idle_task.cancel()
     _signin_idle_task = None
@@ -1654,6 +1660,7 @@ async def _stop_signin() -> None:
         _signin_watch_task.cancel()
         _signin_watch_task = None
     proc, _signin_proc = _signin_proc, None
+    _signin_site = None
     if proc is None:
         return  # nothing was running, so the kiosk was never stopped by us
     try:
@@ -1677,26 +1684,27 @@ async def _signin_idle_stop(seconds: int) -> None:
     await _stop_signin()
 
 
-@app.get("/api/spotify/signin")
-async def spotify_signin_status():
-    running = _signin_proc is not None and _signin_proc.returncode is None
-    return {"running": running}
+def _signin_running() -> bool:
+    return _signin_proc is not None and _signin_proc.returncode is None
 
 
-@app.post("/api/spotify/signin", dependencies=[Depends(require_control_mutation)])
-async def spotify_signin(req: SpotifySigninRequest):
-    global _signin_proc, _signin_idle_task, _signin_watch_task
-    if not req.running:
+async def _signin_request(site: str, running: bool):
+    global _signin_proc, _signin_site, _signin_idle_task, _signin_watch_task
+    if not running:
         await _stop_signin()
         return {"ok": True, "running": False, "error": None}
-    if _signin_proc is not None and _signin_proc.returncode is None:
-        return {"ok": True, "running": True, "error": None}
+    if _signin_running():
+        if _signin_site == site:
+            return {"ok": True, "running": True, "error": None}
+        # Different site: the browser is on the wrong page. Tear the old
+        # session down (kiosk bounces briefly — rare path, kept simple).
+        await _stop_signin()
     try:
         await _delivery_stop_kiosk()
     except RuntimeError as exc:
         raise HTTPException(500, f"Could not stop the kiosk: {exc}")
     try:
-        proc = await _spawn_signin_browser()
+        proc = await _spawn_signin_browser(SIGNIN_URLS[site])
     except Exception as exc:
         await _delivery_start_kiosk()
         raise HTTPException(500, f"Could not open the sign-in browser: {exc}")
@@ -1706,9 +1714,30 @@ async def spotify_signin(req: SpotifySigninRequest):
         await _delivery_start_kiosk()
         raise HTTPException(500, f"Sign-in browser failed to start: {err.strip()}")
     _signin_proc = proc
+    _signin_site = site
     _signin_idle_task = asyncio.create_task(_signin_idle_stop(SIGNIN_IDLE_SECONDS))
     _signin_watch_task = asyncio.create_task(_watch_signin_exit(proc))
     return {"ok": True, "running": True, "error": None}
+
+
+@app.get("/api/spotify/signin")
+async def spotify_signin_status():
+    return {"running": _signin_running()}
+
+
+@app.post("/api/spotify/signin", dependencies=[Depends(require_control_mutation)])
+async def spotify_signin(req: SigninRequest):
+    return await _signin_request("spotify", req.running)
+
+
+@app.get("/api/youtube/signin")
+async def youtube_signin_status():
+    return {"running": _signin_running()}
+
+
+@app.post("/api/youtube/signin", dependencies=[Depends(require_control_mutation)])
+async def youtube_signin(req: SigninRequest):
+    return await _signin_request("youtube", req.running)
 
 
 @app.post("/api/next", dependencies=[Depends(require_control_mutation)])

@@ -9,6 +9,7 @@ def _reset_signin_state(agent_module):
     agent_module._signin_proc = None
     agent_module._signin_idle_task = None
     agent_module._signin_watch_task = None
+    agent_module._signin_site = None
 
 
 class FakeProc:
@@ -58,7 +59,7 @@ def _install(agent_module, monkeypatch, proc, rc=0):
     spy = SystemctlSpy(rc=rc)
     monkeypatch.setattr(agent_module, "_systemctl_user", spy)
 
-    async def _spawn():
+    async def _spawn(url):
         return proc
     monkeypatch.setattr(agent_module, "_spawn_signin_browser", _spawn)
     return spy
