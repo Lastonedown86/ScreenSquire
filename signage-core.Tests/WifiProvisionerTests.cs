@@ -103,6 +103,32 @@ public class WifiProvisionerTests
     }
 
     [Fact]
+    public async Task ListNetworks_parses_the_scan_and_preserves_agent_order()
+    {
+        var stub = new StubHandler(_ => (HttpStatusCode.OK,
+            """{"networks":[{"ssid":"StoreNet","signal":87,"security":"WPA2"},{"ssid":"OpenNet","signal":30,"security":""}]}"""));
+        var p = new WifiProvisioner(new HttpClient(stub));
+
+        var networks = await p.ListNetworksAsync("http://10.55.0.1:8080");
+
+        Assert.EndsWith("/api/wifi/networks", stub.Last!.RequestUri!.AbsolutePath);
+        Assert.Equal(new[] { "StoreNet", "OpenNet" }, networks.Select(n => n.Ssid));
+        Assert.Equal(87, networks[0].Signal);
+        Assert.Equal("WPA2", networks[0].Security);
+        Assert.Equal("", networks[1].Security);
+    }
+
+    [Fact]
+    public async Task ListNetworks_failure_throws_so_the_caller_can_fall_back()
+    {
+        var p = new WifiProvisioner(new HttpClient(
+            new StubHandler(_ => (HttpStatusCode.BadGateway, "{\"detail\":\"scan failed\"}"))));
+
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
+            p.ListNetworksAsync("http://10.55.0.1:8080"));
+    }
+
+    [Fact]
     public async Task Detect_honors_cancellation_instead_of_reporting_offline()
     {
         using var cancellation = new CancellationTokenSource();

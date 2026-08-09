@@ -72,4 +72,29 @@ public sealed class WifiProvisioner(HttpClient http)
         => await http.GetFromJsonAsync<WifiStatus>(
             baseUrl.TrimEnd('/') + "/api/wifi/status",
             cancellationToken) ?? new WifiStatus();
+
+    // Networks the Pi's own radio sees (USB-only agent endpoint). The agent
+    // dedupes and sorts by signal; throws on old agents so callers can fall
+    // back to a laptop-side scan.
+    public async Task<IReadOnlyList<WifiNetwork>> ListNetworksAsync(
+        string baseUrl,
+        CancellationToken cancellationToken = default)
+    {
+        var list = await http.GetFromJsonAsync<WifiNetworkList>(
+            baseUrl.TrimEnd('/') + "/api/wifi/networks",
+            cancellationToken);
+        return list?.Networks ?? [];
+    }
+
+    sealed class WifiNetworkList
+    {
+        [JsonPropertyName("networks")] public List<WifiNetwork> Networks { get; set; } = [];
+    }
+}
+
+public sealed class WifiNetwork
+{
+    [JsonPropertyName("ssid")] public string Ssid { get; set; } = "";
+    [JsonPropertyName("signal")] public int Signal { get; set; }
+    [JsonPropertyName("security")] public string Security { get; set; } = "";
 }
