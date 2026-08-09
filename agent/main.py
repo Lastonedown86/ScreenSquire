@@ -63,7 +63,7 @@ PLAYLIST_FILE = DATA_DIR / "playlist.json"
 PORT = int(os.environ.get("SIGNAGE_PORT", "8080"))
 NAME_FILE = DATA_DIR / "name.txt"
 TRUST_FILE = DATA_DIR / "trust.json"
-AGENT_VERSION = "2026.08.09.1"  # bump on every agent change; the app compares this
+AGENT_VERSION = "2026.08.09.2"  # bump on every agent change; the app compares this
 
 
 def _load_name() -> str:
@@ -729,6 +729,42 @@ async def wifi_status():
     ssid = await _wlan_ssid()
     ip = await _wlan_ip()
     return {"connected": ip is not None, "ssid": ssid, "ip": ip}
+
+
+_TERSE_FIELD = re.compile(r"(?<!\\):")  # nmcli -t escapes ':' inside SSIDs as '\:'
+
+
+@app.get("/api/wifi/networks", dependencies=[Depends(require_usb)])
+async def wifi_networks():
+    """List networks visible to the Pi's own radio, for the SSID picker.
+
+    Store onboarding only: the laptop's scan sees the networks at the register,
+    not the ones behind the TV where this Pi is mounted.
+    """
+    rc, out, err = await _run(
+        ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY",
+         "dev", "wifi", "list", "ifname", "wlan0", "--rescan", "yes"],
+        timeout=15.0,
+    )
+    if rc != 0:
+        raise HTTPException(502, (err.strip() or out.strip() or "scan failed"))
+    best: dict[str, dict] = {}
+    for line in out.splitlines():
+        parts = _TERSE_FIELD.split(line)
+        if len(parts) != 3:
+            continue
+        ssid = re.sub(r"\\(.)", r"\1", parts[0])
+        if not ssid:
+            continue  # hidden network — nothing to show in a picker
+        try:
+            signal = int(parts[1])
+        except ValueError:
+            continue
+        seen = best.get(ssid)
+        if seen is None or signal > seen["signal"]:
+            best[ssid] = {"ssid": ssid, "signal": signal, "security": parts[2]}
+    networks = sorted(best.values(), key=lambda n: n["signal"], reverse=True)
+    return {"networks": networks}
 
 
 # ---- kiosk control (start or stop the local signage display) ----

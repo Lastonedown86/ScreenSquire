@@ -175,10 +175,30 @@ public partial class WifiSetupWindow : Window
         BtnRetry.Visibility = Visibility.Visible;
     }
 
-    // Pre-fill the SSID picker from Windows' visible networks so the client can
-    // pick by name instead of typing it exactly. Best-effort: failure -> empty
-    // list, typing still works.
+    // Pre-fill the SSID picker with what the Pi's own radio sees — it is the
+    // radio that has to connect, and it sits behind the TV, not at the
+    // register. Old agents (404) or scan failures fall back to the laptop's
+    // view. Best-effort either way: failure -> empty list, typing still works.
     async Task LoadNearbyNetworks(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var networks = await _wifi.ListNetworksAsync(PiUsbBase, cancellationToken);
+            if (networks.Count > 0)
+            {
+                CmbSsid.ItemsSource = networks.Select(n => n.Ssid).ToList();
+                return;
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch { /* old agent or scan failure — use the laptop's view below */ }
+        await LoadWindowsNetworks(cancellationToken);
+    }
+
+    async Task LoadWindowsNetworks(CancellationToken cancellationToken)
     {
         try
         {
