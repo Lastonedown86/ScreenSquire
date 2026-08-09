@@ -351,6 +351,14 @@ offer one; use the TV or amp remote.
   within about 12 seconds. Artist pages have no defined end and stay up until
   "Back to playlist" is clicked.
 
+## YouTube sign-in on the TV
+
+The YouTube window has the same "Sign in on TV…" button. Age-restricted
+videos and "sign in to confirm you're not a bot" errors clear once YouTube is
+signed in inside the kiosk profile — same viewer flow, same persistent
+profile, same 15-minute backstop if the session is abandoned. Ads disappear
+only if the signed-in account has YouTube Premium.
+
 ## Known limits
 
 - URL items use an iframe. Sites that deny framing will not display.
