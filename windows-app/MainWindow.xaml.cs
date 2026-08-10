@@ -45,6 +45,13 @@ public partial class MainWindow : Window
         LstMedia.ItemsSource = _media;
         LstPlaylist.ItemsSource = _playlist;
         _playlist.CollectionChanged += (_, _) => SetDirty(true);
+        // catch media pushed from other windows (board captures) even when the
+        // capture-time event couldn't refresh: returning to this window reloads
+        Activated += async (_, _) =>
+        {
+            if (_api == null || DateTime.UtcNow - _lastMediaReload < TimeSpan.FromSeconds(2)) return;
+            await ReloadMediaAsync();
+        };
         _poll.Tick += async (_, _) => await RefreshStatusAsync();
         _nightlyPush.Tick += async (_, _) => await RunNightlyAgentPushAsync();
         _nightlyPush.Start();
@@ -553,7 +560,11 @@ public partial class MainWindow : Window
     }
 
     private void OpenSignage_Click(object sender, RoutedEventArgs e)
-        => new SignageWindow { Owner = this }.Show();
+    {
+        var w = new SignageWindow { Owner = this };
+        w.MediaPushed += async () => await ReloadMediaAsync();
+        w.Show();
+    }
 
     private void OpenBookmarks_Click(object sender, RoutedEventArgs e)
         => new BookmarksWindow { Owner = this }.Show();
@@ -960,9 +971,12 @@ public partial class MainWindow : Window
     private void SetBusy(bool on) => Busy.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
 
     // ---------------------------------------------------------- media
+    private DateTime _lastMediaReload = DateTime.MinValue;
+
     private async Task ReloadMediaAsync()
     {
         if (_api == null) return;
+        _lastMediaReload = DateTime.UtcNow;
         SetBusy(true);
         try
         {
@@ -973,7 +987,7 @@ public partial class MainWindow : Window
                 f.PropertyChanged += MediaChecked_Changed;
                 _media.Add(f);
             }
-            UpdateDeleteSelectedButton();
+            UpdateSelectionButtons();
         }
         finally { SetBusy(false); }
         _ = LoadThumbsAsync();   // fill in thumbnails after the list renders
@@ -1200,14 +1214,24 @@ public partial class MainWindow : Window
 
     private void MediaChecked_Changed(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(MediaFile.IsChecked)) UpdateDeleteSelectedButton();
+        if (e.PropertyName == nameof(MediaFile.IsChecked)) UpdateSelectionButtons();
     }
 
-    private void UpdateDeleteSelectedButton()
+    // a click anywhere on the row toggles its tick; the row's buttons and the
+    // checkbox itself mark their clicks handled before this fires
+    private void MediaRow_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is MediaFile f)
+            f.IsChecked = !f.IsChecked;
+    }
+
+    private void UpdateSelectionButtons()
     {
         int n = _media.Count(m => m.IsChecked);
         BtnDeleteSelected.IsEnabled = n > 0;
         BtnDeleteSelected.Content = n > 0 ? $"Delete selected ({n})" : "Delete selected";
+        BtnAddToPlaylist.IsEnabled = n > 0;
+        BtnShowSelected.IsEnabled = n == 1;
         ChkSelectAll.IsEnabled = _media.Count > 0;
         // programmatic set — Click only fires on user clicks, so no feedback loop
         ChkSelectAll.IsChecked = n == 0 ? false : n == _media.Count ? true : (bool?)null;
@@ -1217,7 +1241,7 @@ public partial class MainWindow : Window
     {
         bool on = ChkSelectAll.IsChecked == true;
         foreach (var m in _media) m.IsChecked = on;
-        UpdateDeleteSelectedButton();   // covers the empty-list click
+        UpdateSelectionButtons();   // covers the empty-list click
     }
 
     private async void BtnDeleteSelected_Click(object sender, RoutedEventArgs e)
@@ -1254,8 +1278,12 @@ public partial class MainWindow : Window
 
     private void BtnAddToPlaylist_Click(object sender, RoutedEventArgs e)
     {
-        if (LstMedia.SelectedItem is not MediaFile f) return;
-        _playlist.Add(new PlaylistItem { Type = f.Type, Source = f.Name, Duration = 10 });
+        var picked = _media.Where(m => m.IsChecked).ToList();
+        if (picked.Count == 0) return;
+        foreach (var f in picked)
+            _playlist.Add(new PlaylistItem { Type = f.Type, Source = f.Name, Duration = 10 });
+        // the action consumed the selection; a stale tick would double-add
+        foreach (var f in picked) f.IsChecked = false;
     }
 
     // ---------------------------------------------------------- playlist
@@ -1366,11 +1394,13 @@ public partial class MainWindow : Window
     private async void BtnShowSelected_Click(object sender, RoutedEventArgs e)
     {
         if (_api == null) return;
-        if (LstMedia.SelectedItem is not MediaFile f)
+        var picked = _media.Where(m => m.IsChecked).ToList();
+        if (picked.Count != 1)
         {
-            Toaster.Show("Click a file in the list on the left first, then try again.");
+            Toaster.Show("Tick exactly one file to show it.");
             return;
         }
+        var f = picked[0];
         try
         {
             await _api.ShowNowAsync(
