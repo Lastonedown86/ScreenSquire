@@ -222,6 +222,83 @@ def test_prepare_delivery_wipes_the_kiosk_browser_profile(
     assert kiosk_calls == [("stop", True), ("start", False)]
 
 
+def test_prepare_delivery_retries_profile_wipe_while_chromium_flushes(
+    agent_module,
+    tmp_path,
+    monkeypatch,
+):
+    """systemctl stop only signals Chromium (ExecStopPost pkill); it can outlive
+    the stop and flush profile state mid-delete, leaving rmtree ENOTEMPTY. The
+    reset must wait out the flush and retry, not 500."""
+    import shutil
+
+    _seed_customer_data(agent_module, tmp_path, monkeypatch)
+    profile = _seed_kiosk_profile(agent_module, tmp_path, monkeypatch)
+
+    async def run(cmd, timeout=30.0):
+        if cmd == ["nmcli", "-t", "-f", "UUID,TYPE", "connection", "show"]:
+            return 0, "", ""
+        raise AssertionError(f"Unexpected command: {cmd!r}")
+
+    monkeypatch.setattr(agent_module, "_run", run)
+    monkeypatch.setattr(delivery_reset, "_PROFILE_WIPE_DELAY", 0.0, raising=False)
+
+    real_rmtree = shutil.rmtree
+    rmtree_calls = []
+
+    def rmtree_racing_with_chromium(path, *args, **kwargs):
+        rmtree_calls.append(path)
+        if len(rmtree_calls) == 1:
+            # Chromium's dying flush recreates a file mid-delete
+            real_rmtree(path)
+            (profile / "Default").mkdir(parents=True)
+            (profile / "Default" / "Preferences.tmp").write_text("flush")
+            raise OSError(39, "Directory not empty", str(path))
+        return real_rmtree(path)
+
+    monkeypatch.setattr(shutil, "rmtree", rmtree_racing_with_chromium)
+
+    response = _paired_request(agent_module, "10.55.0.10")()
+
+    assert response.status_code == 200
+    assert not profile.exists()
+    assert len(rmtree_calls) == 2
+
+
+def test_prepare_delivery_keeps_trust_when_profile_wipe_never_succeeds(
+    agent_module,
+    tmp_path,
+    monkeypatch,
+):
+    """A Chromium that never stops writing must fail the reset with trust
+    intact so the builder can repair and retry."""
+    import shutil
+
+    _seed_customer_data(agent_module, tmp_path, monkeypatch)
+    profile = _seed_kiosk_profile(agent_module, tmp_path, monkeypatch)
+
+    async def run(cmd, timeout=30.0):
+        raise AssertionError("Wi-Fi cleanup must not run after wipe failure")
+
+    monkeypatch.setattr(agent_module, "_run", run)
+    monkeypatch.setattr(delivery_reset, "_PROFILE_WIPE_DELAY", 0.0, raising=False)
+
+    def rmtree_always_racing(path, *args, **kwargs):
+        raise OSError(39, "Directory not empty", str(path))
+
+    monkeypatch.setattr(shutil, "rmtree", rmtree_always_racing)
+
+    response = _paired_request(
+        agent_module,
+        "10.55.0.10",
+        raise_server_exceptions=False,
+    )()
+
+    assert response.status_code == 500
+    assert profile.exists()
+    assert agent_module.trust_store.controller_id == "test-controller"
+
+
 def test_prepare_delivery_keeps_trust_when_the_kiosk_cannot_be_stopped(
     agent_module,
     tmp_path,

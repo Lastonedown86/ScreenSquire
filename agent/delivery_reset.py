@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 import socket
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
+
+# The kiosk unit's stop only signals Chromium (ExecStopPost pkill); the browser
+# can outlive the stop by several seconds while it flushes profile state to
+# disk, repopulating the directory mid-delete. Retry across that window.
+_PROFILE_WIPE_ATTEMPTS = 10
+_PROFILE_WIPE_DELAY = 0.5
 
 
 CommandRunner = Callable[
@@ -119,8 +126,15 @@ async def prepare_for_delivery(
     # Chromium profile and must never ship. Chromium cannot be running while
     # its profile is deleted, or it rewrites parts of it on exit.
     await stop_kiosk()
-    if kiosk_profile_dir.exists():
-        shutil.rmtree(kiosk_profile_dir)
+    for attempt in range(_PROFILE_WIPE_ATTEMPTS):
+        try:
+            if kiosk_profile_dir.exists():
+                shutil.rmtree(kiosk_profile_dir)
+            break
+        except OSError:
+            if attempt == _PROFILE_WIPE_ATTEMPTS - 1:
+                raise
+            await asyncio.sleep(_PROFILE_WIPE_DELAY)
     await start_kiosk()
 
     await _delete_wifi_profiles(run)
