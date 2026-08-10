@@ -126,14 +126,30 @@
                         <TextBlock Text="Pictures and videos stored on your Pi."
                                    Foreground="{StaticResource TextMuted}" FontSize="11" VerticalAlignment="Center"/>
                     </DockPanel>
-                    <ListBox x:Name="LstMedia" Grid.Row="1" SelectionMode="Single"
+                    <ListBox x:Name="LstMedia" Grid.Row="1"
                              AllowDrop="True" Drop="LstMedia_Drop" DragOver="FileDrag_Over">
+                        <!-- ticks are the only selection model: no row highlight, and a
+                             click anywhere on the row toggles its checkbox -->
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                <Setter Property="Focusable" Value="False"/>
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListBoxItem">
+                                            <ContentPresenter/>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <DockPanel Margin="2">
+                                <DockPanel Margin="2" Background="Transparent"
+                                           MouseLeftButtonUp="MediaRow_Click">
                                     <CheckBox DockPanel.Dock="Left" IsChecked="{Binding IsChecked}"
                                               VerticalAlignment="Center" Margin="0,0,6,0"
-                                              ToolTip="Tick files, then use 'Delete selected' below"/>
+                                              ToolTip="Tick files, then use the buttons below"/>
                                     <Grid DockPanel.Dock="Left" Width="48" Height="32" Margin="0,0,8,0">
                                         <TextBlock Text="{Binding Glyph}" FontSize="18"
                                                    HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -185,7 +201,7 @@
                         <Button x:Name="BtnAddUrl" Content="Add web page…" Click="BtnAddUrl_Click"
                                 ToolTip="Put a website (news, scores, …) into the playlist on the right"/>
                         <Button x:Name="BtnAddToPlaylist" Content="Add to playlist →" Click="BtnAddToPlaylist_Click"
-                                ToolTip="Put the selected file into the playlist on the right"/>
+                                IsEnabled="False" ToolTip="Put every ticked file into the playlist on the right"/>
                         <Button x:Name="BtnDeleteSelected" Content="Delete selected" Click="BtnDeleteSelected_Click"
                                 IsEnabled="False" ToolTip="Delete every ticked file from the Pi"/>
                     </WrapPanel>
@@ -293,7 +309,7 @@
                                Foreground="{StaticResource TextMuted}" FontSize="11" Margin="0,0,0,4"/>
                     <WrapPanel>
                         <Button x:Name="BtnShowSelected" Content="Show selected media" Click="BtnShowSelected_Click"
-                                ToolTip="Put the file selected on the left onto the TV right now"/>
+                                IsEnabled="False" ToolTip="Put the one ticked file onto the TV right now"/>
                         <Button x:Name="BtnShowUrl" Content="Show a web page…" Click="BtnShowUrl_Click"
                                 ToolTip="Type a web address and put it on the TV right now"/>
                         <TextBlock Text="for" VerticalAlignment="Center" Margin="8,0,4,0"/>
