@@ -45,6 +45,13 @@ public partial class MainWindow : Window
         LstMedia.ItemsSource = _media;
         LstPlaylist.ItemsSource = _playlist;
         _playlist.CollectionChanged += (_, _) => SetDirty(true);
+        // catch media pushed from other windows (board captures) even when the
+        // capture-time event couldn't refresh: returning to this window reloads
+        Activated += async (_, _) =>
+        {
+            if (_api == null || DateTime.UtcNow - _lastMediaReload < TimeSpan.FromSeconds(2)) return;
+            await ReloadMediaAsync();
+        };
         _poll.Tick += async (_, _) => await RefreshStatusAsync();
         _nightlyPush.Tick += async (_, _) => await RunNightlyAgentPushAsync();
         _nightlyPush.Start();
@@ -964,9 +971,12 @@ public partial class MainWindow : Window
     private void SetBusy(bool on) => Busy.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
 
     // ---------------------------------------------------------- media
+    private DateTime _lastMediaReload = DateTime.MinValue;
+
     private async Task ReloadMediaAsync()
     {
         if (_api == null) return;
+        _lastMediaReload = DateTime.UtcNow;
         SetBusy(true);
         try
         {
