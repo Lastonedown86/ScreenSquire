@@ -63,7 +63,7 @@ PLAYLIST_FILE = DATA_DIR / "playlist.json"
 PORT = int(os.environ.get("SIGNAGE_PORT", "8080"))
 NAME_FILE = DATA_DIR / "name.txt"
 TRUST_FILE = DATA_DIR / "trust.json"
-AGENT_VERSION = "2026.08.10.1"  # bump on every agent change; the app compares this
+AGENT_VERSION = "2026.08.10.2"  # bump on every agent change; the app compares this
 
 
 def _load_name() -> str:
@@ -85,7 +85,17 @@ MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 ALLOWED_UPLOAD_EXT = {
     ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp",   # images
     ".mp4", ".webm", ".mov", ".mkv",                     # video
+    ".mp3", ".wav", ".ogg",                              # audio (time-up sounds)
 }
+
+
+def _media_kind(name: str) -> str:
+    mime = mimetypes.guess_type(name)[0] or ""
+    if mime.startswith("video"):
+        return "video"
+    if mime.startswith("audio"):
+        return "audio"
+    return "image"
 
 
 def _plain_media_name(name: str) -> str:
@@ -591,6 +601,8 @@ async def kiosk_page():
 
 
 app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
+# read-only like /media: builtin time-up sounds and other kiosk assets
+app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
 
 # ---- screenshot dashboard (boards + live timer) ----
 DASHBOARD_FILE = DATA_DIR / "dashboard.json"
@@ -602,6 +614,8 @@ class TimerState(BaseModel):
     remaining: Optional[int] = None    # seconds
     round: Optional[int] = None
     label: Optional[str] = None
+    # time-up sound: a builtin slug ("gong") or an uploaded "/media/…" path
+    sound: Optional[str] = Field(default=None, max_length=300)
 
 
 class DashboardPayload(BaseModel):
@@ -1413,8 +1427,7 @@ async def upload_media(
         while chunk := await file.read(1024 * 1024):
             out.write(chunk)
     tmp.replace(dest)
-    kind = "video" if (mimetypes.guess_type(name)[0] or "").startswith("video") else "image"
-    return {"ok": True, "name": name, "type": kind, "bytes": dest.stat().st_size}
+    return {"ok": True, "name": name, "type": _media_kind(name), "bytes": dest.stat().st_size}
 
 
 @app.get("/api/media")
@@ -1422,10 +1435,9 @@ async def list_media():
     files = []
     for p in sorted(MEDIA_DIR.iterdir()):
         if p.is_file() and not p.name.endswith(".part"):
-            mime = mimetypes.guess_type(p.name)[0] or ""
             files.append({
                 "name": p.name,
-                "type": "video" if mime.startswith("video") else "image",
+                "type": _media_kind(p.name),
                 "bytes": p.stat().st_size,
             })
     return {"files": files}

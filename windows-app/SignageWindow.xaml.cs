@@ -55,6 +55,12 @@ public partial class SignageWindow : Window
             $"http://{t.Device.Ip}:{t.Device.Port}",
             t.ControlContext!));
 
+    sealed record SoundChoice(string Display, string? Value);
+    bool _soundInitializing;
+
+    // the picker's value: builtin slug, "/media/…" path, or null for no sound
+    string? CurrentSound => CmbSound.SelectedValue as string;
+
     public SignageWindow()
     {
         InitializeComponent();
@@ -68,6 +74,7 @@ public partial class SignageWindow : Window
             var saved = new PiSignage.Signage.DeviceStore().Load();
             RestoreSession(saved);
             HydrateFromDevice();         // restore what's already on the device
+            LoadSoundChoices();
         };
         Closing += (_, _) => SaveSession();
         // WPF sometimes sends the owner behind other apps when an owned window
@@ -489,7 +496,7 @@ public partial class SignageWindow : Window
                 _state.Boards[slot] = path;
                 await _client.PostDashboardAsync(
                     t.BaseUrl,
-                    DashboardPayload.Build(_state, _timer),
+                    DashboardPayload.Build(_state, _timer, CurrentSound),
                     t.ControlContext);
             });
             // Status carries the outcome; toast only interrupts for problems
@@ -513,8 +520,71 @@ public partial class SignageWindow : Window
         => await MultiPush.RunAsync(Targets, t =>
                _client.PostDashboardAsync(
                    t.BaseUrl,
-                   DashboardPayload.BuildTimerOnly(_timer),
+                   DashboardPayload.BuildTimerOnly(_timer, CurrentSound),
                    t.ControlContext));
+
+    // ---------------------------------------------------------- time-up sound
+    void LoadSoundChoices()
+    {
+        _soundInitializing = true;
+        CmbSound.Items.Clear();
+        CmbSound.Items.Add(new SoundChoice("No sound", null));
+        CmbSound.Items.Add(new SoundChoice("Buzzer", "buzzer"));
+        CmbSound.Items.Add(new SoundChoice("Bell", "bell"));
+        CmbSound.Items.Add(new SoundChoice("Gong", "gong"));
+        CmbSound.Items.Add(new SoundChoice("Chime", "chime"));
+        foreach (var path in App.Settings.CustomTimerSounds)
+            CmbSound.Items.Add(new SoundChoice(
+                System.IO.Path.GetFileName(path), path));
+        var saved = App.Settings.TimerSound;
+        CmbSound.SelectedValue = string.IsNullOrEmpty(saved) ? null : saved;
+        if (CmbSound.SelectedIndex < 0) CmbSound.SelectedIndex = 1;  // default Buzzer
+        _soundInitializing = false;
+    }
+
+    async void Sound_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_soundInitializing) return;
+        App.Settings.TimerSound = CurrentSound ?? "";
+        App.SaveSettings();
+        // a round already on the clock should honor the new choice at zero
+        if (_timer.State != TimerRunState.Stopped && Targets.Any())
+            await FanOutDashboard();
+    }
+
+    async void UploadSound_Click(object sender, RoutedEventArgs e)
+    {
+        if (!Targets.Any()) { Status.Text = "Tick at least one TV above."; return; }
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Choose a time-up sound",
+            Filter = "Audio files (*.mp3;*.wav;*.ogg)|*.mp3;*.wav;*.ogg",
+        };
+        if (dlg.ShowDialog() != true) return;
+        var name = System.IO.Path.GetFileName(dlg.FileName);
+        byte[] bytes;
+        try { bytes = System.IO.File.ReadAllBytes(dlg.FileName); }
+        catch (Exception ex) { Toaster.Show($"Couldn't read that file: {ex.Message}", ToastKind.Error); return; }
+        SetBusy(true);
+        try
+        {
+            string mediaPath = "/media/" + name;
+            var result = await MultiPush.RunAsync(Targets, async t =>
+            {
+                mediaPath = await _client.UploadMediaAsync(t.BaseUrl, name, bytes, t.ControlContext);
+            });
+            if (result.AllFailed) { Toaster.Show(result.Summary(), ToastKind.Error); return; }
+            if (result.Failed.Count > 0) Toaster.Show(result.Summary(), ToastKind.Warning);
+            if (!App.Settings.CustomTimerSounds.Contains(mediaPath))
+                App.Settings.CustomTimerSounds.Add(mediaPath);
+            App.SaveSettings();
+            LoadSoundChoices();
+            CmbSound.SelectedValue = mediaPath;   // fires Sound_Changed → persists + pushes
+            MediaPushed?.Invoke();                // the main window lists audio files too
+            Status.Text = $"{name} sent — plays at time-up.";
+        }
+        finally { SetBusy(false); }
+    }
 
     async Task<bool> Post(string msg)
     {

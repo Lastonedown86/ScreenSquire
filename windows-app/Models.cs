@@ -102,7 +102,12 @@ public class MediaFile : System.ComponentModel.INotifyPropertyChanged
         get => _thumb;
         set { _thumb = value; PropertyChanged?.Invoke(this, new(nameof(Thumb))); }
     }
-    [JsonIgnore] public string Glyph => Type == "video" ? "🎬" : "🖼";
+    [JsonIgnore] public string Glyph => Type switch
+    {
+        "video" => "🎬",
+        "audio" => "🔊",
+        _ => "🖼",
+    };
 
     // UI-only: multi-select checkbox state
     bool _isChecked;
