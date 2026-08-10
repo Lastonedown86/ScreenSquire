@@ -11,6 +11,10 @@ namespace PiSignage.Control;
 
 public partial class SignageWindow : Window
 {
+    // raised after a capture lands on at least one TV, so the owner window can
+    // refresh its media list without the user clicking Connect
+    public event Action? MediaPushed;
+
     readonly DashboardState _state = new();
     readonly RoundTimer _timer = new();
     readonly PushClient _client = new(new HttpClient { Timeout = TimeSpan.FromSeconds(10) });
@@ -496,6 +500,7 @@ public partial class SignageWindow : Window
             {
                 App.Settings.Regions[slot] = new PiSignage.Signage.RegionRect { X = r.x, Y = r.y, W = r.w, H = r.h };
                 App.SaveSettings();
+                MediaPushed?.Invoke();
             }
             return result;
         }

@@ -553,7 +553,11 @@ public partial class MainWindow : Window
     }
 
     private void OpenSignage_Click(object sender, RoutedEventArgs e)
-        => new SignageWindow { Owner = this }.Show();
+    {
+        var w = new SignageWindow { Owner = this };
+        w.MediaPushed += async () => await ReloadMediaAsync();
+        w.Show();
+    }
 
     private void OpenBookmarks_Click(object sender, RoutedEventArgs e)
         => new BookmarksWindow { Owner = this }.Show();
