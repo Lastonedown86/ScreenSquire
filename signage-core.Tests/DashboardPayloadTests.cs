@@ -44,6 +44,32 @@ public class DashboardPayloadTests
     }
 
     [Fact]
+    public void BuildCarriesTimeUpSound()
+    {
+        var timer = new RoundTimer(); timer.Start(25, "Round 3", 3);
+        var json = JsonSerializer.Serialize(DashboardPayload.Build(new DashboardState(), timer, "gong"));
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("gong", doc.RootElement.GetProperty("timer").GetProperty("sound").GetString());
+    }
+
+    [Fact]
+    public void BuildTimerOnlyCarriesTimeUpSound()
+    {
+        var timer = new RoundTimer(); timer.Start(25, "Round 3", 3);
+        var json = JsonSerializer.Serialize(DashboardPayload.BuildTimerOnly(timer, "/media/horn.wav"));
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("/media/horn.wav", doc.RootElement.GetProperty("timer").GetProperty("sound").GetString());
+    }
+
+    [Fact]
+    public void NoSoundSerializesNull()
+    {
+        var json = JsonSerializer.Serialize(DashboardPayload.Build(new DashboardState(), new RoundTimer()));
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(JsonValueKind.Null, doc.RootElement.GetProperty("timer").GetProperty("sound").ValueKind);
+    }
+
+    [Fact]
     public void BuildTimerOnlyOmitsViewDataAndCarriesTimerFields()
     {
         var timer = new RoundTimer(); timer.Start(25, "Round 3", 3);

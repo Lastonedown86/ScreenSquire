@@ -327,6 +327,16 @@
   const tLbl = document.getElementById('timerLbl');
   let tState = null, tEndsAt = null, tPausedRem = null, tLabel = '';
   let showsFullTimer = false;   // set by show(): current item is /dashboard?view=timer
+  let tSound = null, tSoundArmed = false;
+
+  // time-up sound, chosen in the app: a builtin slug or an uploaded /media/ file.
+  // Missing file or blocked playback stays silent — never an error on the TV.
+  function playTimeUpSound() {
+    if (!tSound) return;
+    const src = tSound.startsWith('/media/') ? tSound
+      : '/static/sounds/' + encodeURIComponent(tSound) + '.wav';
+    new Audio(src).play().catch(() => {});
+  }
 
   async function pollTimer() {
     try {
@@ -336,6 +346,7 @@
       tEndsAt = t.state === 'running' ? t.endsAt : null;
       tPausedRem = t.state === 'paused' ? t.remaining : null;
       tLabel = t.label || '';
+      tSound = t.sound || null;
     } catch (e) { /* keep last known state on a blip */ }
   }
 
@@ -346,6 +357,13 @@
     let rem = null;
     if (tState === 'running' && tEndsAt != null) rem = (tEndsAt - Date.now()) / 1000;
     else if (tState === 'paused') rem = tPausedRem;
+    // arm only after a live countdown is seen above zero, so a page reload
+    // landing on an already-expired timer stays silent; fires even when the
+    // fullscreen timer view hides the corner overlay
+    if (tState === 'running' && rem != null) {
+      if (rem > 0.5) tSoundArmed = true;
+      else if (rem <= 0 && tSoundArmed) { tSoundArmed = false; playTimeUpSound(); }
+    }
     if (rem == null || showsFullTimer) { tOverlay.style.display = 'none'; return; }
     tOverlay.style.display = 'block';
     tOverlay.classList.toggle('over', rem <= 0);

@@ -34,6 +34,10 @@ public sealed class AppSettings
     public List<string> SignageDeviceIds { get; set; } = new();
     // Capture boards shown in the board picker (display names as the client typed them).
     public List<string> Boards { get; set; } = new() { "pairings", "standings" };
+    // Time-up sound: a builtin slug ("buzzer"), an uploaded "/media/…" path, or "" for none.
+    public string TimerSound { get; set; } = "buzzer";
+    // Names of custom sounds uploaded to the TVs, so the picker can offer them again.
+    public List<string> CustomTimerSounds { get; set; } = new();
     // Saved YouTube links for the bookmarks window; queue plays in list order.
     public List<YouTubeBookmark> YouTubeBookmarks { get; set; } = new();
     // Saved Spotify links for the Spotify window (no queue — playlists are the queue).

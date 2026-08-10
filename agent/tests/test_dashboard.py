@@ -82,3 +82,22 @@ def test_partial_board_push_merges(client, signed):
 def test_dashboard_page_pulses_time_up(client):
     html = client.get("/dashboard").text
     assert "timepulse" in html   # TIME pulses so it reads across the room
+
+
+def test_timer_sound_roundtrip(client, signed):
+    signed("POST", "/api/dashboard", json={"view_data": {"boards": {}},
+        "timer": {"state": "running", "remaining": 1500, "label": "Round 1",
+                  "sound": "gong"}})
+    assert client.get("/api/dashboard").json()["timer"]["sound"] == "gong"
+
+
+def test_builtin_time_up_sounds_served(client):
+    for name in ("buzzer", "bell", "gong", "chime"):
+        r = client.get(f"/static/sounds/{name}.wav")
+        assert r.status_code == 200, name
+        assert r.content[:4] == b"RIFF", name
+
+
+def test_kiosk_page_wires_time_up_sound(client):
+    html = client.get("/").text
+    assert "/static/sounds/" in html   # kiosk resolves builtin slugs to files

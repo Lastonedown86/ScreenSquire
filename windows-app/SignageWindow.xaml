@@ -97,6 +97,16 @@
                         <Button x:Name="BtnStop" Content="St_op" Click="StopTimer_Click" Margin="6,0,0,0" Padding="8,3"
                                 ToolTip="Stop the countdown and clear the TV clock"/>
                     </StackPanel>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,8,0,0">
+                        <TextBlock Text="Time-up sound:" VerticalAlignment="Center" Foreground="{StaticResource TextMuted}"/>
+                        <ComboBox x:Name="CmbSound" Width="150" Margin="6,0,0,0"
+                                  DisplayMemberPath="Display" SelectedValuePath="Value"
+                                  SelectionChanged="Sound_Changed"
+                                  ToolTip="What the TV plays when the round clock hits zero"/>
+                        <Button x:Name="BtnUploadSound" Content="Upload sound…" Margin="6,0,0,0" Padding="8,3"
+                                Click="UploadSound_Click"
+                                ToolTip="Send an .mp3, .wav or .ogg to your ticked TVs and play it at time-up"/>
+                    </StackPanel>
                 </StackPanel>
             </GroupBox>
 

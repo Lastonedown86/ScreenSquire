@@ -1280,7 +1280,11 @@ public partial class MainWindow : Window
     {
         var picked = _media.Where(m => m.IsChecked).ToList();
         if (picked.Count == 0) return;
-        foreach (var f in picked)
+        // sounds are timer-only: audio never enters the playlist engine
+        var playable = picked.Where(f => f.Type != "audio").ToList();
+        if (playable.Count < picked.Count)
+            Toaster.Show("Sound files play at time-up, not in the playlist — skipped.", ToastKind.Info);
+        foreach (var f in playable)
             _playlist.Add(new PlaylistItem { Type = f.Type, Source = f.Name, Duration = 10 });
         // the action consumed the selection; a stale tick would double-add
         foreach (var f in picked) f.IsChecked = false;
@@ -1401,6 +1405,11 @@ public partial class MainWindow : Window
             return;
         }
         var f = picked[0];
+        if (f.Type == "audio")
+        {
+            Toaster.Show("Sound files play at time-up, not on screen.");
+            return;
+        }
         try
         {
             await _api.ShowNowAsync(
